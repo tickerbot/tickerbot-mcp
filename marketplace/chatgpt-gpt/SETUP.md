@@ -41,31 +41,20 @@ Show me every AAPL dividend and analyst rating change since Jan 2024.
 
 ### Actions
 
-⚠️ **Heads up — Custom GPTs cap each Action at 30 operations.** The
-full `tickerbot.io/openapi.yaml` exposes 42 operations across `/v2/*`.
-Two ways to handle:
-
-**Option A (recommended — quick)**: import the full spec; if the GPT
-builder rejects, prune the spec down to the ~25 most useful ops
-before importing. Drop these to get under the cap:
-- `/v2/scan` POST (keep GET form, drop POST mirror)
-- `/v2/webhooks/{id}/enable` (admin-y, rarely needed in chat)
-- `/v2/webhooks/{id}/test` (admin-y)
-- `/v2/webhooks/{id}/deliveries` (admin-y)
-- `/v2/news/scan` POST (keep GET form)
-- `/v2/signals` PATCH and DELETE (chat shouldn't mutate custom signals here)
-- `/v2/universes` PATCH and DELETE (same)
-
-**Option B (clean)**: serve a separate GPT-tuned spec at
-`tickerbot.io/openapi-gpt.yaml` that filters to ~25 chat-friendly
-operations. Cleaner for the GPT builder but is a separate piece of
-work in `tickerbot-client/app/openapi.yaml/route.ts`.
+Custom GPTs cap each Action at 30 operations. We serve a pre-filtered
+spec at `/openapi-gpt.yaml` (25 ops — scan, ticker reads, signal
+reads, custom-signal create, news, universes, webhook subscribe/
+list/delete). Strategies, write-duplicates, and webhook plumbing
+endpoints are excluded.
 
 In the GPT builder: click "Create new action" → "Import from URL" →
 paste:
 ```
-https://tickerbot.io/openapi.yaml
+https://tickerbot.io/openapi-gpt.yaml
 ```
+
+(Runtime authors who want the full 42-operation surface still use
+`/openapi.yaml` — see /api/agents.)
 
 **Authentication:**
 - Type: **API Key**
