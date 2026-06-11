@@ -1,21 +1,14 @@
 name: Publish to npm
 
-# Tag-based publish. First release uses a granular NPM_TOKEN secret;
-# once @tickerbot/mcp-server exists on the registry we switch this
-# workflow to OIDC (Trusted Publishing) — npm's docs require the
-# package to exist before its trusted publisher can be configured.
+# Tag-based publish via npm Trusted Publishing (OIDC).
 #
 # Release flow:
 #   npm version patch          # bumps package.json + creates a v0.x.y tag
 #   git push --follow-tags     # pushes the commit and the tag
 #
-# After first successful publish:
-#   1. npmjs.com → Packages → @tickerbot/mcp-server → Settings → Trusted publishing
-#   2. Add GitHub Actions publisher: owner=tickerbot, repo=tickerbot-mcp,
-#      workflow=publish.yml (no environment).
-#   3. Update this workflow: remove NODE_AUTH_TOKEN, add
-#      `npm install -g npm@latest` before the build step, delete NPM_TOKEN
-#      secret from the repo.
+# Auth: OIDC. The `id-token: write` permission lets GitHub mint a short-
+# lived token that npm validates against the trusted publisher config on
+# @tickerbot/mcp-server. No long-lived NPM_TOKEN secret needed.
 
 on:
   push:
@@ -39,6 +32,11 @@ jobs:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
           cache: 'npm'
+
+      # npm 11.5+ is required for OIDC Trusted Publishing. Node 20 LTS
+      # still ships with npm 10.x by default, so we upgrade explicitly.
+      - name: Upgrade npm
+        run: npm install -g npm@latest
 
       - name: Install
         run: npm ci
@@ -77,7 +75,9 @@ jobs:
             exit 1
           fi
 
-      - name: Publish to npm
+      - name: Publish via Trusted Publishing (OIDC)
+        # No NODE_AUTH_TOKEN — npm 11.5+ detects the GitHub OIDC token
+        # (from the `id-token: write` permission above) and validates it
+        # against the trusted publisher config on npm. `--provenance`
+        # attaches a signed attestation visible on the package page.
         run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
