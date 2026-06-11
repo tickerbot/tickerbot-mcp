@@ -1,0 +1,83 @@
+name: Publish to npm
+
+# Tag-based publish. First release uses a granular NPM_TOKEN secret;
+# once @tickerbot/mcp-server exists on the registry we switch this
+# workflow to OIDC (Trusted Publishing) — npm's docs require the
+# package to exist before its trusted publisher can be configured.
+#
+# Release flow:
+#   npm version patch          # bumps package.json + creates a v0.x.y tag
+#   git push --follow-tags     # pushes the commit and the tag
+#
+# After first successful publish:
+#   1. npmjs.com → Packages → @tickerbot/mcp-server → Settings → Trusted publishing
+#   2. Add GitHub Actions publisher: owner=tickerbot, repo=tickerbot-mcp,
+#      workflow=publish.yml (no environment).
+#   3. Update this workflow: remove NODE_AUTH_TOKEN, add
+#      `npm install -g npm@latest` before the build step, delete NPM_TOKEN
+#      secret from the repo.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  id-token: write   # required for npm package provenance attestations
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+
+      - name: Install
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Verify package version matches tag
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::package.json version ($PKG_VERSION) does not match tag ($TAG_VERSION)"
+            exit 1
+          fi
+          echo "Publishing version $PKG_VERSION"
+
+      - name: Smoke test (stdio handshake + tools/list)
+        run: |
+          # Verify the protocol handshake works and tools/list returns a
+          # non-empty catalog. We force the baked-snapshot path by pointing
+          # TICKERBOT_API_URL at an unreachable host — otherwise the count
+          # depends on what main_service is currently serving (runtime
+          # discovery) and the test becomes brittle.
+          OUT=$( (
+            printf '%s\n' \
+              '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}' \
+              '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}' \
+              '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+            sleep 4
+          ) | TICKERBOT_API_KEY=ci-smoke-key TICKERBOT_API_URL=http://127.0.0.1:1 node ./bin/tickerbot-mcp.js 2>/dev/null )
+          COUNT=$(echo "$OUT" | tail -1 | node -e "const j=JSON.parse(require('fs').readFileSync(0,'utf8')); console.log((j.result && j.result.tools) ? j.result.tools.length : 0)")
+          echo "Tool count: $COUNT"
+          if [ "$COUNT" -lt "1" ]; then
+            echo "::error::Smoke test failed — tools/list returned 0 or no response"
+            exit 1
+          fi
+
+      - name: Publish to npm
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

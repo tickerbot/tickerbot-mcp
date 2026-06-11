@@ -1,0 +1,46 @@
+{
+  "name": "@tickerbot/mcp-server",
+  "version": "0.1.0",
+  "description": "Model Context Protocol server for the Tickerbot Signals API. Lets Claude, ChatGPT, Cursor, and other MCP-compatible clients run scans, fetch tickers, and query signals in natural language.",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "tickerbot-mcp": "bin/tickerbot-mcp.js"
+  },
+  "files": [
+    "dist",
+    "bin",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build",
+    "dev": "tsc --watch"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "tickerbot",
+    "stocks",
+    "signals",
+    "claude",
+    "ai"
+  ],
+  "author": "Tickerbot",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tickerbot/tickerbot-mcp.git"
+  },
+  "homepage": "https://tickerbot.io/mcp-server",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0"
+  }
+}

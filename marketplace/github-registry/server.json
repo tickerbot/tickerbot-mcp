@@ -1,0 +1,42 @@
+{
+  "$schema": "https://raw.githubusercontent.com/modelcontextprotocol/registry/main/docs/server-json/server.schema.json",
+  "name": "io.tickerbot/mcp",
+  "description": "Run scans, fetch tickers, and query signals on the live US stock market and top 100 cryptos in natural language. Connects Claude, ChatGPT, Cursor, and other MCP clients to the Tickerbot Signals API (SQL access to ~12,000 tickers, ~120 prethresholded boolean flags, full daily history).",
+  "repository": {
+    "url": "https://github.com/tickerbot/tickerbot-mcp",
+    "source": "github"
+  },
+  "version": "0.1.0",
+  "websiteUrl": "https://tickerbot.io/mcp-server",
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "@tickerbot/mcp-server",
+      "version": "0.1.0",
+      "transport": { "type": "stdio" },
+      "environmentVariables": [
+        {
+          "name": "TICKERBOT_API_KEY",
+          "description": "Tickerbot API key (tb_live_… or tb_test_…). Get one at https://tickerbot.io/dashboard.",
+          "isRequired": true,
+          "isSecret": true
+        }
+      ]
+    }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.tickerbot.io",
+      "headers": [
+        {
+          "name": "Authorization",
+          "description": "Bearer <TICKERBOT_API_KEY>",
+          "isRequired": true,
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}
