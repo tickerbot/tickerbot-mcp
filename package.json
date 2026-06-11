@@ -1,6 +1,7 @@
 {
   "name": "@tickerbot/mcp-server",
-  "version": "0.1.2",
+  "mcpName": "io.github.tickerbot/mcp-server",
+  "version": "0.1.3",
   "description": "MCP server for Tickerbot — the stock market, in SQL. Scan, replay, or subscribe across ~12,000 US tickers and top 100 cryptos (338+ signal columns) from Claude, ChatGPT, Cursor, and other MCP clients.",
   "type": "module",
   "main": "dist/index.js",
