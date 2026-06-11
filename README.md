@@ -1,6 +1,6 @@
 # @tickerbot/mcp-server
 
-Model Context Protocol server for the [Tickerbot Signals API](https://tickerbot.io). Lets Claude, Cursor, VS Code Copilot, and other MCP-compatible clients run scans, fetch tickers, and query signals in natural language.
+Model Context Protocol server for [Tickerbot](https://tickerbot.io) — the stock market, in SQL. Install in Claude, Cursor, VS Code Copilot, and other MCP-compatible clients to scan ~12,000 US tickers and top 100 cryptos, replay any day, or subscribe a query — across 338+ signal columns.
 
 ## Install
 

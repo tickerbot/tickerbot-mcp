@@ -14,7 +14,7 @@ SQL signals + scans across the US stock market and top 100 cryptos.
 
 ## Detailed description (~250 words)
 ```
-Tickerbot is a developer signals API for the live US stock market and top 100 cryptos. The Tickerbot Connector turns every endpoint into a tool Claude can call directly — no code, no curl.
+Tickerbot is the stock market, in SQL. Every US-listed equity plus the top 100 cryptos by market cap, refreshed every minute. Every notable condition — price, volume, momentum, gaps, patterns, fundamentals — becomes a named signal you can scan, replay, or subscribe to. The Tickerbot Connector turns every endpoint into a tool Claude can call directly — no code, no curl.
 
 What you can ask:
 

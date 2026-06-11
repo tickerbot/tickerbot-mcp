@@ -1,7 +1,7 @@
 {
   "name": "@tickerbot/mcp-server",
-  "version": "0.1.0",
-  "description": "Model Context Protocol server for the Tickerbot Signals API. Lets Claude, ChatGPT, Cursor, and other MCP-compatible clients run scans, fetch tickers, and query signals in natural language.",
+  "version": "0.1.1",
+  "description": "MCP server for Tickerbot — the stock market, in SQL. Scan, replay, or subscribe across ~12,000 US tickers and top 100 cryptos (338+ signal columns) from Claude, ChatGPT, Cursor, and other MCP clients.",
   "type": "module",
   "main": "dist/index.js",
   "bin": {

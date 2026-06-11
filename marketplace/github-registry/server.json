@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/modelcontextprotocol/registry/main/docs/server-json/server.schema.json",
   "name": "io.tickerbot/mcp",
-  "description": "Run scans, fetch tickers, and query signals on the live US stock market and top 100 cryptos in natural language. Connects Claude, ChatGPT, Cursor, and other MCP clients to the Tickerbot Signals API (SQL access to ~12,000 tickers, ~120 prethresholded boolean flags, full daily history).",
+  "description": "The stock market, in SQL. Scan the live market, replay any day, or subscribe a query — and Tickerbot POSTs your client the moment it fires. ~12,000 US tickers and top 100 cryptos, refreshed every minute, with 338+ signal columns. Connects Claude, ChatGPT, Cursor, and other MCP clients.",
   "repository": {
     "url": "https://github.com/tickerbot/tickerbot-mcp",
     "source": "github"
