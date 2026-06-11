@@ -16,7 +16,7 @@ on:
       - 'v*'
 
 permissions:
-  contents: read
+  contents: write   # required to attach the .mcpb bundle to the GitHub Release
   id-token: write   # required for npm package provenance attestations
 
 jobs:
@@ -81,3 +81,20 @@ jobs:
         # against the trusted publisher config on npm. `--provenance`
         # attaches a signed attestation visible on the package page.
         run: npm publish --provenance --access public
+
+      - name: Build MCPB bundle
+        # Self-contained .mcpb file for Claude Desktop click-to-install.
+        # Output: dist-mcpb/tickerbot.mcpb (~115 KB).
+        run: npm run build:mcpb
+
+      - name: Create GitHub Release with .mcpb attached
+        # The Tier 2 install path on /mcp-server links to the
+        # `releases/latest/download/tickerbot.mcpb` URL — this step
+        # publishes that artifact for every tag, so the download link
+        # always resolves to the freshest build.
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: dist-mcpb/tickerbot.mcpb

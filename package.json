@@ -15,6 +15,7 @@
   ],
   "scripts": {
     "build": "tsc",
+    "build:mcpb": "bash scripts/build-mcpb.sh",
     "prepublishOnly": "npm run build",
     "dev": "tsc --watch"
   },
@@ -41,7 +42,9 @@
     "@modelcontextprotocol/sdk": "^1.0.0"
   },
   "devDependencies": {
+    "@anthropic-ai/mcpb": "^2.1.2",
     "@types/node": "^20.0.0",
+    "esbuild": "^0.20.0",
     "typescript": "^5.4.0"
   }
 }
