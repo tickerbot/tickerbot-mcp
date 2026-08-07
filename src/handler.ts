@@ -75,15 +75,69 @@ export async function runTool(
     // non-JSON response — fall through with text body
   }
 
+  // Surface advisory headers instead of discarding them (TB-188): the agent
+  // should learn when a route is deprecated/sunsetting, when it is being
+  // throttled, or when the Free monthly quota is nearly gone. Mirrors
+  // main_service/mcp/handler.js — keep the two in step.
+  const advisories = collectAdvisories(res.headers)
+
   if (!res.ok) {
-    throw new ToolError(
+    const err = new ToolError(
       `Tickerbot ${tool.endpoint.method} ${tool.endpoint.path} failed: ${res.status} ${res.statusText}`,
       res.status,
       parsed,
     )
+    if (advisories) (err as ToolError & { advisories?: unknown }).advisories = advisories
+    throw err
+  }
+  if (advisories && parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    ;(parsed as Record<string, unknown>)._advisories = advisories
   }
 
   return parsed
+}
+
+// The advisory subset of the response-header contract. Deliberately
+// selective: always-on X-RateLimit-*/X-Quota-* counters would add noise to
+// every call, so rate/quota numbers ride along only when the server is
+// actually warning (throttled, near-limit, or low quota).
+function collectAdvisories(headers: Headers): Record<string, unknown> | null {
+  const out: Record<string, unknown> = {}
+  const dep = headers.get('deprecation')
+  const sunset = headers.get('sunset')
+  if (dep || sunset) {
+    const link = headers.get('link') ?? ''
+    const succ = link.match(/<([^>]+)>\s*;\s*rel="successor-version"/)
+    out.deprecated = {
+      ...(dep ? { since: dep } : {}),
+      ...(sunset ? { sunset_on: sunset, warning: `This route stops serving on ${sunset}.` } : {}),
+      ...(succ ? { successor: succ[1] } : {}),
+    }
+  }
+  const retryAfter = headers.get('retry-after')
+  const rlWarning = headers.get('x-ratelimit-warning')
+  if (retryAfter || rlWarning) {
+    const remaining = headers.get('x-ratelimit-remaining')
+    out.rate_limit = {
+      ...(rlWarning ? { warning: rlWarning } : {}),
+      ...(retryAfter ? { retry_after_seconds: Number(retryAfter) || retryAfter } : {}),
+      ...(headers.get('x-ratelimit-limit') ? { limit: Number(headers.get('x-ratelimit-limit')) } : {}),
+      ...(remaining != null && remaining !== '' ? { remaining: Number(remaining) } : {}),
+      ...(headers.get('x-ratelimit-reset') ? { reset_epoch_s: Number(headers.get('x-ratelimit-reset')) } : {}),
+    }
+  }
+  const quotaLimit = Number(headers.get('x-quota-limit'))
+  const quotaRemaining = Number(headers.get('x-quota-remaining'))
+  if (headers.get('x-quota-limit') && Number.isFinite(quotaLimit) && Number.isFinite(quotaRemaining)
+      && quotaLimit > 0 && quotaRemaining <= quotaLimit * 0.1) {
+    out.monthly_quota = {
+      warning: `Free-plan monthly quota nearly exhausted: ${quotaRemaining} of ${quotaLimit} calls left this month.`,
+      limit: quotaLimit,
+      remaining: quotaRemaining,
+      ...(headers.get('x-quota-reset') ? { reset_epoch_s: Number(headers.get('x-quota-reset')) } : {}),
+    }
+  }
+  return Object.keys(out).length ? out : null
 }
 
 function buildRequest(
