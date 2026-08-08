@@ -9,16 +9,16 @@ Tickerbot
 
 ## One-line description (≤80 chars)
 ```
-SQL signals + scans across the US stock market and top 100 cryptos.
+SQL signals + scans across the US stock market, plus rates, FX and crypto series.
 ```
 
 ## Detailed description (~250 words)
 ```
-Tickerbot is the stock market, in SQL. Every US-listed equity plus the top 100 cryptos by market cap, refreshed every minute. Every notable condition — price, volume, momentum, gaps, patterns, fundamentals — becomes a named signal you can scan, replay, or subscribe to. The Tickerbot Connector turns every endpoint into a tool Claude can call directly — no code, no curl.
+Tickerbot is the stock market, in SQL. Every US-listed equity plus a curated set of rates, FX and crypto series, refreshed every minute. Every notable condition — price, volume, momentum, gaps, patterns, fundamentals — becomes a named signal you can scan, replay, or subscribe to. The Tickerbot Connector turns every endpoint into a tool Claude can call directly — no code, no curl.
 
 What you can ask:
 
-• "Find oversold semiconductor stocks bouncing on volume." → Claude composes a SQL scan against ~12,000 tracked tickers and returns matches.
+• "Find oversold semiconductor stocks bouncing on volume." → Claude composes a SQL scan against ~14,500 tracked tickers and returns matches.
 • "What's NVDA's RSI and short interest right now?" → fetches the full current row, including ~100 numeric indicators and ~120 pre-thresholded boolean flags.
 • "How often has the gap-up + high-RVOL setup hit over the last 30 days?" → runs the same scan against historical close-of-day state, day by day.
 • "Save a signal called 'oversold_with_volume' as rsi_14 < 30 AND volume_ratio_20d > 2." → creates a named, persistent custom signal the user can reference in future scans.

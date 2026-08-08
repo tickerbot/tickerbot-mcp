@@ -17,7 +17,7 @@ Tickerbot — the stock market, in SQL
 
 ### Description (short)
 ```
-Scan, replay, or subscribe across ~12,000 US tickers and the top 100 cryptos in plain English. SQL on every row, every column, every minute.
+Scan, replay, or subscribe across ~14,500 US-listed equities plus a curated set of rates, FX and crypto series in plain English. SQL on every row, every column, every minute.
 ```
 
 ### Profile picture
@@ -28,10 +28,10 @@ Scan, replay, or subscribe across ~12,000 US tickers and the top 100 cryptos in 
 
 ### Conversation starters
 ```
-Find oversold semiconductor stocks bouncing on volume.
-What's NVDA's RSI and short interest right now?
-How often has the gap-up + small-cap + high-RVOL setup hit over the last 30 days?
-Show me every AAPL dividend and analyst rating change since Jan 2024.
+What's NVDA's price and RSI right now?
+What was AAPL trading at one year ago today?
+Compare TSLA, NVDA, and AMD's current RSI.
+How has SPY's RSI moved over the last 30 days?
 ```
 
 ### Capabilities
