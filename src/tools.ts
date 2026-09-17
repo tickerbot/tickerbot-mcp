@@ -38,6 +38,9 @@ interface JsonSchemaProp {
   enum?: readonly string[]
   default?: unknown
   items?: { type: string }
+  /** Nested object params (create_webhook.trigger) carry their own shape. */
+  properties?: Record<string, JsonSchemaProp>
+  required?: readonly string[]
 }
 
 export const tools: readonly ToolDef[] = [
