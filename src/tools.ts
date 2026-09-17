@@ -43,49 +43,57 @@ interface JsonSchemaProp {
 export const tools: readonly ToolDef[] = [
   {
     "name": "tickerbot_list_tickers",
-    "description": "List active tickers from the Tickerbot universe (~14,500 US equities, plus the US Treasury curve and Fed policy rates under `R:`, and major FX pairs, spot metals and crypto under `X:`). Use `tickers` for bulk lookup of named symbols (returns full rows); otherwise walks the universe alphabetically with `cursor` pagination. Supports filters: search, asset_type, exchange, sector, min_market_cap.",
+    "description": "Every symbol we track, active or delisted, as one identity row each. Use `/v2/tickers/{ticker}` for the full row.",
     "inputSchema": {
       "type": "object",
       "properties": {
-        "tickers": {
-          "type": "string",
-          "description": "Comma-separated symbols (max 50). When set, returns full rows for these symbols and pagination params are ignored."
-        },
-        "limit": {
-          "type": "integer",
-          "description": "Page size. Max 1000. Default 50."
-        },
-        "cursor": {
-          "type": "string",
-          "description": "Opaque cursor from a prior response."
-        },
         "search": {
           "type": "string",
-          "description": "Case-insensitive substring filter on ticker/name. Orders results by market_cap desc."
-        },
-        "asset_type": {
-          "type": "string",
-          "description": "Filter by INSTRUMENT TYPE within equities: the stored value (CS, ETF, ADRC, PFD, FUND, UNIT, SP, ETS, WARRANT, RIGHT, ETN, ETV), or \"equity\" for the equity-like set. This is not an asset class — `asset_type=crypto` is rejected; crypto is in the main list under its X: symbols."
-        },
-        "exchange": {
-          "type": "string",
-          "description": "Filter by exchange (e.g. \"XNYS\", \"XNAS\", \"BATS\")."
-        },
-        "sector": {
-          "type": "string",
-          "description": "Exact-match sector filter (e.g. \"Technology\")."
-        },
-        "min_market_cap": {
-          "type": "number",
-          "description": "Minimum market cap in USD. Orders results by market_cap desc."
-        },
-        "universe": {
-          "type": "string",
-          "description": "Restrict to a universe slug (top_10, top_100, or a saved one)."
+          "description": "Case-insensitive match on `ticker` or `name`, max 64 characters (longer is a 400). Results are ranked: an exact ticker match first, then symbols that start with the term, then name matches — alphabetical within each rank. The cursor carries the rank, so paging a search never repeats or skips."
         },
         "asset_class": {
           "type": "string",
-          "description": "Filter by asset class — `stocks`, `rates`, `crypto`, `fx`, or a comma-separated list. Omit for every class. Distinct from asset_type (the instrument type within equities)."
+          "description": "Filter by asset class — `stocks`, `rates`, `crypto`, `fx`, or a comma-separated list (the live classes today; validated for shape, not against a fixed list, so a well-formed class we don't track simply matches nothing — same contract as scan). Omit for every class. This is the class of INSTRUMENT, distinct from `asset_type` below (the instrument type within equities). Every row carries its `asset_class`, so a non-equity row identifies itself."
+        },
+        "asset_type": {
+          "type": "string",
+          "description": "Filter by instrument type WITHIN equities — the stored `asset_type` value (`CS`, `ETF`, `ADRC`, `PFD`, `FUND`, `UNIT`, `SP`, `ETS`, `WARRANT`, `RIGHT`, `ETN`, `ETV`), matched case-insensitively. `equity` is a convenience value expanding to the equity-like set. This is NOT an asset class: `asset_type=crypto` is rejected — use `asset_class=crypto`.",
+          "enum": [
+            "CS",
+            "ETF",
+            "ADRC",
+            "PFD",
+            "FUND",
+            "UNIT",
+            "SP",
+            "ETS",
+            "WARRANT",
+            "RIGHT",
+            "ETN",
+            "ETV",
+            "equity"
+          ]
+        },
+        "exchange": {
+          "type": "string",
+          "description": "Filter by exchange name — the value rows carry in their `exchange` field. MIC codes (`XNAS`, `XNYS`, `BATS`) are also accepted and match `exchange_mic`. A malformed value (non-letters, over 16 chars) is a 400.",
+          "enum": [
+            "NASDAQ",
+            "NYSE",
+            "NYSE Arca",
+            "Cboe BZX",
+            "NYSE American",
+            "OTC Link"
+          ]
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Page size. Max 1000.",
+          "default": 50
+        },
+        "cursor": {
+          "type": "string",
+          "description": "Opaque cursor from the previous response's `next_cursor` field. Continues the walk from after that page. A cursor minted under `search` only resumes the same search."
         }
       }
     },
@@ -93,32 +101,39 @@ export const tools: readonly ToolDef[] = [
       "method": "GET",
       "path": "/v2/tickers",
       "paramLocation": {
-        "tickers": "query",
-        "limit": "query",
-        "cursor": "query",
         "search": "query",
+        "asset_class": "query",
         "asset_type": "query",
         "exchange": "query",
-        "sector": "query",
-        "min_market_cap": "query",
-        "universe": "query",
-        "asset_class": "query"
+        "limit": "query",
+        "cursor": "query"
       }
     }
   },
   {
     "name": "tickerbot_get_ticker",
-    "description": "Get the full current row for one ticker — every column on the schema (price, change, indicators like rsi_14, every boolean flag like above_sma_50, fundamentals like pe_ratio). Pass `asof` (YYYY-MM-DD or ISO timestamp like 2026-07-20T15:30:00Z) for the row as it stood at that past moment — date-only gives the close of that day.",
+    "description": "The full ticker row, every signal on the schema page, for one symbol or a comma list of up to 50. Right now, or with `asof`, as of any past date. Pass a comma list of up to 50 symbols for a batch (`data` keyed by symbol plus `not_found`). Crypto is the X-prefixed pair (X:BTCUSD) — bare BTC/ETH are US-listed ETFs.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "ticker": {
           "type": "string",
-          "description": "Symbol. Case-insensitive. Equities: bare symbol (AAPL). Crypto: X-prefixed pair (X:BTCUSD) — bare BTC/ETH are US-listed ETFs, not spot crypto."
+          "description": "One symbol, or a comma-separated list of up to 50 for a batch response keyed by symbol. Case-insensitive. Equities are bare symbols (`AAPL`); every other class carries a prefix — rates (`R:SOFR`), crypto (`X:BTCUSD`), fx (`X:EURUSD`). Bare `BTC`/`ETH` are US-listed ETFs, not spot crypto. See Tickers."
         },
         "asof": {
           "type": "string",
-          "description": "Optional YYYY-MM-DD or ISO timestamp. Date-only returns the row at close of that day; a timestamp returns the row as of that moment (finest tier covering each column)."
+          "description": "Optional. Target moment as `YYYY-MM-DD` (that day's close) or an ISO timestamp (that intraday moment) — the same read as it stood then, unlimited depth. Full contract under As of a past date."
+        },
+        "interval": {
+          "type": "string",
+          "description": "Grain the past state is reconstructed at: `1m`, `1h`, `1d`, or `auto` (default). Only valid alongside `asof` — a live read with `interval` is a 400. Details under As of a past date.",
+          "enum": [
+            "1m",
+            "1h",
+            "1d",
+            "auto"
+          ],
+          "default": "auto"
         }
       },
       "required": [
@@ -130,116 +145,116 @@ export const tools: readonly ToolDef[] = [
       "path": "/v2/tickers/{ticker}",
       "paramLocation": {
         "ticker": "path",
-        "asof": "query"
+        "asof": "query",
+        "interval": "query"
       }
     }
   },
   {
-    "name": "tickerbot_get_ticker_history",
-    "description": "Time-travel SNAPSHOT: the full wide row for one ticker as it stood at a past date (one row, not a series — for a multi-column time SERIES use tickerbot_get_series). Returns indicators, boolean flags, and the most-recent fundamentals known on that date. Unlimited depth on every plan.",
+    "name": "tickerbot_subscribe_ticker",
+    "description": "Push one ticker: we POST your endpoint whenever it matches the condition you give. Webhooks need a paid plan (Free has no webhook slots). Omit `target_url` for in-app delivery.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "ticker": {
           "type": "string",
-          "description": "Symbol."
+          "description": "Case-insensitive. Equities are bare symbols (`AAPL`); every other class carries a prefix — rates (`R:SOFR`), crypto (`X:BTCUSD`), fx (`X:EURUSD`). Bare `BTC`/`ETH` are US-listed ETFs, not spot crypto. See Tickers."
         },
-        "asof": {
+        "q": {
           "type": "string",
-          "description": "Target date as YYYY-MM-DD or full ISO timestamp."
+          "description": "WHERE-clause fragment using signal names from the schema — the same grammar as /v2/scan. (`condition` accepted as an alias.)"
+        },
+        "condition": {
+          "type": "string",
+          "description": "Original name for `q` — accepted as well. The same WHERE-clause fragment; send either spelling."
+        },
+        "target_url": {
+          "type": "string",
+          "description": "https:// URL to POST when the condition fires. Omit for in-app delivery (visible in the dashboard)."
+        },
+        "channel": {
+          "type": "string",
+          "description": "Delivery channel. `webhook` (POST to `target_url`), `discord` (post an embed to `discord_url`), `in_app` (dashboard only), or `mobile_push` (notify a phone signed in to the Tickerbot mobile app; requires a `device_id` from `POST /v2/devices/register`). Inferred when omitted: `webhook` if `target_url` is set, `discord` if `discord_url` is set, else `in_app`. `slack` is reserved and returns `501`. See the Delivery channels guide.",
+          "enum": [
+            "webhook",
+            "discord",
+            "in_app",
+            "mobile_push"
+          ]
+        },
+        "discord_url": {
+          "type": "string",
+          "description": "Discord incoming-webhook URL (`https://discord.com/api/webhooks/…`). Required when `channel` is `discord`. Stored as a posting credential: the create response echoes it back under `channel_config`, but every later read (list, get, deliveries) strips it and sets `channel_config_present: true` instead."
+        },
+        "device_id": {
+          "type": "string",
+          "description": "Device to notify, from `POST /v2/devices/register`. Required when `channel` is `mobile_push`; unknown ids are a 404 `device_not_found`."
+        },
+        "cadence": {
+          "type": "string",
+          "description": "How often to evaluate. `realtime` (the default) is evaluated on every data refresh (~1×/min); `hourly` and `nyse_open` throttle to a batch schedule. `1m` is a deprecated alias for `realtime`.",
+          "enum": [
+            "realtime",
+            "hourly",
+            "nyse_open"
+          ]
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable label (up to 80 chars). Defaults to `<TICKER>: <query>`."
+        },
+        "columns": {
+          "type": "string",
+          "description": "Comma-separated extra signals to include in each fired payload match row, beyond the standard set (`ticker`, `name`, `asset_type`, `price`, `change_1d_pct`, `market_cap`). Each must be a real signal; an unknown signal is rejected at creation. `fields` accepted as an alias — and note the RESPONSE reports them under `fields`, as an array."
+        },
+        "order": {
+          "type": "string",
+          "description": "Signal the fired payload's match lists are sorted by before the 100-row cap is applied, so a truncated list is the deterministic top 100 rather than an arbitrary sample. Must be a real signal (validated at creation).",
+          "default": "market_cap"
+        },
+        "dir": {
+          "type": "string",
+          "description": "Sort direction for `order`.",
+          "enum": [
+            "asc",
+            "desc"
+          ],
+          "default": "desc"
         }
       },
       "required": [
         "ticker",
-        "asof"
+        "q"
       ]
     },
     "endpoint": {
-      "method": "GET",
-      "path": "/v2/tickers/{ticker}/history",
+      "method": "POST",
+      "path": "/v2/tickers/{ticker}/subscribe",
       "paramLocation": {
         "ticker": "path",
-        "asof": "query"
-      }
-    }
-  },
-  {
-    "name": "tickerbot_get_series",
-    "description": "THE series primitive: cross-ticker, multi-column time series on one aligned grid. Pick up to 25 columns (price, OHLCV, indicators like rsi_14, boolean flags, custom signals) and up to 50 tickers; get one flat row per ticker per interval step ({ticker, t, price, rsi_14, …}), cursor-paged backward. `transitions_only=true` with boolean columns returns only the rows where a flag CHANGED — \"every golden_cross flip this year\" in one call. All-time on every plan. Replaces looping asof snapshots per date, and replaces the sunset per-ticker history routes.",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "ticker": {
-          "type": "string",
-          "description": "Single symbol (alias of `tickers`, wins when both are set). One of ticker/tickers is required."
-        },
-        "tickers": {
-          "type": "string",
-          "description": "Comma-separated symbols, max 50, all sharing one time grid. One of ticker/tickers is required."
-        },
-        "columns": {
-          "type": "string",
-          "description": "Comma list of columns (max 25). `fields` is a permanent alias. Defaults to a small set intersected with the interval's schema (intraday tiers carry fewer columns than daily — e.g. market_cap is daily-only)."
-        },
-        "interval": {
-          "type": "string",
-          "description": "Grid granularity. `1w` weekly, `1q` fiscal-quarterly (fundamentals).",
-          "enum": [
-            "1m",
-            "1h",
-            "1d",
-            "1w",
-            "1q"
-          ]
-        },
-        "from": {
-          "type": "string",
-          "description": "Earliest timestamp (inclusive), YYYY-MM-DD or ISO."
-        },
-        "to": {
-          "type": "string",
-          "description": "Latest timestamp (inclusive; a bare date means through that day)."
-        },
-        "transitions_only": {
-          "type": "boolean",
-          "description": "Only rows where a boolean column changed value (requires at least one boolean column). Each row carries `transition_drivers` naming the flags that flipped."
-        },
-        "limit": {
-          "type": "integer",
-          "description": "Rows per page. Max 1000. Default 252."
-        },
-        "cursor": {
-          "type": "string",
-          "description": "Opaque cursor from a prior response — pages older."
-        }
-      },
-      "required": []
-    },
-    "endpoint": {
-      "method": "GET",
-      "path": "/v2/series",
-      "paramLocation": {
-        "ticker": "query",
-        "tickers": "query",
-        "columns": "query",
-        "interval": "query",
-        "from": "query",
-        "to": "query",
-        "transitions_only": "query",
-        "limit": "query",
-        "cursor": "query"
+        "q": "body",
+        "condition": "body",
+        "target_url": "body",
+        "channel": "body",
+        "discord_url": "body",
+        "device_id": "body",
+        "cadence": "body",
+        "name": "body",
+        "columns": "body",
+        "order": "body",
+        "dir": "body"
       }
     }
   },
   {
     "name": "tickerbot_get_ticker_coverage",
-    "description": "Data-coverage report for one ticker — which intervals and columns exist, from when, at what depth. The honesty endpoint: ask this before assuming a gap in bars/series is a data outage vs. genuinely-never-covered (e.g. sub-hour bars outside the active universe, fundamentals on non-equities).",
+    "description": "For one ticker, what we hold and how far back — so an empty result is never ambiguous. Ask this before treating a gap in bars or series as an outage. `minute_tier.included: false` with `on_demand: true` is not a gap — sub-hour bars fetch from the provider on first request.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "ticker": {
           "type": "string",
-          "description": "Symbol."
+          "description": "Case-insensitive. Equities are bare symbols (`AAPL`); every other class carries a prefix — rates (`R:SOFR`), crypto (`X:BTCUSD`), fx (`X:EURUSD`). Bare `BTC`/`ETH` are US-listed ETFs, not spot crypto. See Tickers."
         }
       },
       "required": [
@@ -255,145 +270,27 @@ export const tools: readonly ToolDef[] = [
     }
   },
   {
-    "name": "tickerbot_get_ticker_bars",
-    "description": "Get OHLCV (open/high/low/close/volume) bars for one or more symbols at a given interval, oldest-first. Pass a comma-separated `ticker` list (up to 50) for a bulk response keyed by symbol. Use `asof` for a single point-in-time bar, or `before`+`limit` to back-page. `1d`/`1h` cover the full universe with full history; sub-hour intervals back-fill on demand.",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "ticker": {
-          "type": "string",
-          "description": "Symbol, or comma-separated list (up to 50) for a bulk response keyed by symbol."
-        },
-        "interval": {
-          "type": "string",
-          "description": "Bar interval.",
-          "enum": [
-            "1s",
-            "1m",
-            "5m",
-            "15m",
-            "30m",
-            "1h",
-            "1d"
-          ]
-        },
-        "limit": {
-          "type": "integer",
-          "description": "Most-recent N bars. Default 100."
-        },
-        "before": {
-          "type": "string",
-          "description": "Return the N bars ending strictly before this date/timestamp (YYYY-MM-DD or epoch-ms) — back-paging."
-        },
-        "from": {
-          "type": "string",
-          "description": "Window start (inclusive), YYYY-MM-DD / ISO / epoch-ms. Combines with `to`; page inside the window with `cursor`. Mutually exclusive with `asof` and `before` (400)."
-        },
-        "to": {
-          "type": "string",
-          "description": "Window end (inclusive; a bare YYYY-MM-DD means through the end of that day). Mutually exclusive with `asof` and `before` (400)."
-        },
-        "asof": {
-          "type": "string",
-          "description": "Return a single bar as of this date/timestamp (point-in-time)."
-        },
-        "cursor": {
-          "type": "string",
-          "description": "Continuation token from a prior response's `next_cursor` (sugar for `before`, and the way to page inside a from/to window)."
-        }
-      },
-      "required": [
-        "ticker",
-        "interval"
-      ]
-    },
-    "endpoint": {
-      "method": "GET",
-      "path": "/v2/tickers/{ticker}/bars/{interval}",
-      "paramLocation": {
-        "ticker": "path",
-        "interval": "path",
-        "limit": "query",
-        "before": "query",
-        "from": "query",
-        "to": "query",
-        "asof": "query",
-        "cursor": "query"
-      }
-    }
-  },
-  {
-    "name": "tickerbot_get_ticker_holdings",
-    "description": "Get an ETF's constituent holdings and their weights, heaviest first. When the ticker is not an ETF, `is_etf` is false and `holdings` is empty. (The reverse lookup \"which ETFs hold NVDA\" is a scan filter on the `etf_holders` column, not this tool.)",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "ticker": {
-          "type": "string",
-          "description": "ETF symbol."
-        },
-        "limit": {
-          "type": "integer",
-          "description": "Max holdings returned. Max 5000. Default 500."
-        }
-      },
-      "required": [
-        "ticker"
-      ]
-    },
-    "endpoint": {
-      "method": "GET",
-      "path": "/v2/tickers/{ticker}/holdings",
-      "paramLocation": {
-        "ticker": "path",
-        "limit": "query"
-      }
-    }
-  },
-  {
-    "name": "tickerbot_get_ticker_sectors",
-    "description": "Get an ETF's sector allocation (sector weights, heaviest first). When the ticker is not an ETF, `is_etf` is false and `sectors` is empty.",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "ticker": {
-          "type": "string",
-          "description": "ETF symbol."
-        }
-      },
-      "required": [
-        "ticker"
-      ]
-    },
-    "endpoint": {
-      "method": "GET",
-      "path": "/v2/tickers/{ticker}/sectors",
-      "paramLocation": {
-        "ticker": "path"
-      }
-    }
-  },
-  {
-    "name": "tickerbot_list_signals_catalog",
-    "description": "List the unified signal catalog: every built-in column on the schema (`kind: builtin`) plus the caller's custom signals (`kind: expression`). Built-in rows carry the audited spec metadata — description, category, update cadence, ticker coverage (`ticker_scope`), history depth (`history`/`history_since`), queryable resolutions, and asset classes. Use to discover what `q=` clauses and signal names are available before composing a scan.",
+    "name": "tickerbot_list_signals",
+    "description": "Every signal you can name in a query — the built-in signals and your own custom signals, in one catalog. Use to discover the signal names and `q` vocabulary before composing a scan; custom signals appear with `kind: custom`.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "kind": {
           "type": "string",
-          "description": "Filter by kind. Omit for both. (`custom` is accepted as a legacy alias of `expression`.)",
+          "description": "Filter by kind (`expression` accepted as a legacy alias for `custom`). Omit to return both.",
           "enum": [
             "builtin",
-            "expression"
+            "custom"
           ]
         },
         "limit": {
           "type": "integer",
-          "description": "Page size for custom slice. Max 200. Default 50."
+          "description": "Page size for the custom-signal slice. Max 200.",
+          "default": 50
         },
         "cursor": {
           "type": "string",
-          "description": "Opaque cursor."
+          "description": "Opaque cursor from a prior response."
         }
       }
     },
@@ -408,138 +305,22 @@ export const tools: readonly ToolDef[] = [
     }
   },
   {
-    "name": "tickerbot_get_signals_match",
-    "description": "Find tickers that match a single signal right now (or at a past moment with `asof`). Booleans need no condition. Numerics need a `condition` like \">70\" or \"<=200\". Sorted by signal value desc for numerics.",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "signal": {
-          "type": "string",
-          "description": "Column name on ticker (e.g. golden_cross_today, rsi_14, market_cap)."
-        },
-        "condition": {
-          "type": "string",
-          "description": "Required for numerics. Single bound: <op><value>, ops in (>, >=, =, !=, <, <=)."
-        },
-        "asof": {
-          "type": "string",
-          "description": "Optional YYYY-MM-DD or ISO timestamp. Date-only matches daily state; a timestamp matches the finest intraday state covering the query."
-        },
-        "universe": {
-          "type": "string",
-          "description": "Optional universe slug."
-        },
-        "sort_by": {
-          "type": "string",
-          "description": "Row order: `default` (alphabetic for booleans, highest-value-first for numerics) or `market_cap` (desc, adds market_cap to each row).",
-          "enum": [
-            "default",
-            "market_cap"
-          ]
-        },
-        "include_active_since": {
-          "type": "boolean",
-          "description": "Built-in booleans only: adds `active_since` per row — when the flag last flipped true (from the spans archive)."
-        },
-        "limit": {
-          "type": "integer",
-          "description": "Page size. Max 200. Default 50."
-        },
-        "cursor": {
-          "type": "string",
-          "description": "Opaque cursor."
-        }
-      },
-      "required": [
-        "signal"
-      ]
-    },
-    "endpoint": {
-      "method": "GET",
-      "path": "/v2/signals/{signal}",
-      "paramLocation": {
-        "signal": "path",
-        "condition": "query",
-        "asof": "query",
-        "universe": "query",
-        "sort_by": "query",
-        "include_active_since": "query",
-        "limit": "query",
-        "cursor": "query"
-      }
-    }
-  },
-  {
-    "name": "tickerbot_list_signal_events",
-    "description": "Occurrence SPANS of a boolean signal for one ticker, newest-first. For STATE flags (above_sma_50, in_uptrend) each row is a true-WINDOW: started_at when it flipped true, ended_at when it flipped back (null while still true), with prices at both ends. For EVENT flags (golden_cross, gap_up) each row is a point firing (started_at = ended_at). \"Golden crosses in June\" is from=2026-06-01&to=2026-06-30. Built-in booleans only — numerics and custom signals have no precomputed spans (use tickerbot_get_series).",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "signal": {
-          "type": "string",
-          "description": "Built-in boolean flag name."
-        },
-        "ticker": {
-          "type": "string",
-          "description": "Symbol."
-        },
-        "from": {
-          "type": "string",
-          "description": "Window start (inclusive) on each span's started_at — YYYY-MM-DD, ISO, or epoch-ms."
-        },
-        "to": {
-          "type": "string",
-          "description": "Window end (inclusive) on started_at; a bare YYYY-MM-DD means through the end of that day."
-        },
-        "merge_gap_seconds": {
-          "type": "integer",
-          "description": "Interval-union: contiguous windows whose gap is ≤ N seconds collapse into one — de-fragments flags with thousands of per-tick rows (e.g. 3600 for daily flags). Default 0 = no merge. A cursor pins this; resend it unchanged when paging."
-        },
-        "limit": {
-          "type": "integer",
-          "description": "Page size. Max 1000, newest first."
-        },
-        "cursor": {
-          "type": "string",
-          "description": "Opaque cursor — pages older, inside the from/to window if one is set."
-        }
-      },
-      "required": [
-        "signal",
-        "ticker"
-      ]
-    },
-    "endpoint": {
-      "method": "GET",
-      "path": "/v2/signals/{signal}/{ticker}/events",
-      "paramLocation": {
-        "signal": "path",
-        "ticker": "path",
-        "from": "query",
-        "to": "query",
-        "merge_gap_seconds": "query",
-        "limit": "query",
-        "cursor": "query"
-      }
-    }
-  },
-  {
     "name": "tickerbot_create_custom_signal",
-    "description": "Save a SQL WHERE expression as a named custom signal the caller can reference by name in future scans.",
+    "description": "A named boolean predicate you can reference anywhere a built-in signal goes.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "name": {
           "type": "string",
-          "description": "Snake_case identifier."
+          "description": "Slug — `^[a-z][a-z0-9_]{0,63}$`. Must not collide with any built-in signal name, and 15 names are reserved outright: `columns`, plus the `/v2/series` OHLCV aliases `open`/`high`/`low`/`close`/`volume`/`vwap`/`trades` and `o`/`h`/`l`/`c`/`v`/`vw`/`n` (those resolve to bars before custom lookup). This is the signal's API handle: it's what you reference in `q` and in the CRUD path."
         },
         "expr": {
           "type": "string",
-          "description": "SQL WHERE expression. Same grammar as scan `q`."
+          "description": "Boolean SQL predicate. May reference built-in signals and other custom signals you own. Must evaluate to true/false. Max 4000 chars. Stricter grammar than scan `q`: comparisons, `AND`/`OR`/`NOT`, `IN`, `BETWEEN`, `IS [NOT] NULL`, arithmetic, and the functions `abs`/`coalesce`/`round`/`least`/`greatest` only — no `LIKE`/`ILIKE`, no `CASE`, no `::` casts, no other functions. An expression that scans fine can still be rejected here with `compile_failed`. What you send is what you read back: responses echo your expression VERBATIM, not its expansion. A signal referencing another custom of yours returns the reference as you typed it — the inlined SQL exists only internally, and is what a subscribe endpoint freezes into a webhook."
         },
         "description": {
           "type": "string",
-          "description": "Optional human description."
+          "description": "Free-form notes. Max 500 chars. Absent or empty comes back as `\"\"` rather than null."
         }
       },
       "required": [
@@ -559,91 +340,277 @@ export const tools: readonly ToolDef[] = [
   },
   {
     "name": "tickerbot_update_custom_signal",
-    "description": "Edit one of the caller's custom signals — supply `expr`, `description`, `new_name`, or any combination. Providing `expr` recompiles it against the live column whitelist. Renaming is refused (409) while other custom signals reference the current name. Built-in signals are read-only; only custom signals the caller owns can be patched. Available on every plan.",
+    "description": "Update a custom signal you own — its expression, description, or name.",
     "inputSchema": {
       "type": "object",
       "properties": {
-        "name": {
+        "signal": {
           "type": "string",
-          "description": "CURRENT slug — identifies which signal to edit."
-        },
-        "new_name": {
-          "type": "string",
-          "description": "Rename the signal to this slug (snake_case, must not collide with a built-in column or another of your signals)."
+          "description": "Custom signal slug (the signal name). A built-in name answers 404 — built-ins are read-only."
         },
         "expr": {
           "type": "string",
-          "description": "New SQL WHERE expression. Re-validated on save."
+          "description": "New SQL expression. Re-validated and re-inlined against your other custom signals. Same strict grammar as create — no `LIKE`/`ILIKE`, `CASE`, `::` casts, or functions beyond `abs`/`coalesce`/`round`/`least`/`greatest`. The response echoes your expression verbatim, not its expansion."
         },
         "description": {
           "type": "string",
-          "description": "New description."
+          "description": "New description. Not derived from `expr` — change both if the prose describes a threshold you are moving."
+        },
+        "new_name": {
+          "type": "string",
+          "description": "New slug — renames the signal and changes its API handle everywhere (same validation as create). Refused while other custom signals reference the current name. `name` is accepted as an alias (new_name wins when both are sent), but new_name is the unambiguous spelling since the URL already carries the current name."
         }
       },
       "required": [
-        "name"
+        "signal"
       ]
     },
     "endpoint": {
       "method": "PATCH",
-      "path": "/v2/signals/{name}",
+      "path": "/v2/signals/{signal}",
       "paramLocation": {
-        "name": "path",
-        "new_name": "body",
+        "signal": "path",
         "expr": "body",
-        "description": "body"
+        "description": "body",
+        "new_name": "body"
       }
     }
   },
   {
     "name": "tickerbot_delete_custom_signal",
-    "description": "Delete one of the caller's custom signals. Cascade-safe by default: refused with 409 if another custom signal references it (the error lists the referencing signals). Pass `force: true` to delete anyway — existing references will break on next recompile. Available on every plan.",
+    "description": "Delete one of your custom signals. Refused by default if another of your signals references it.",
     "inputSchema": {
       "type": "object",
       "properties": {
-        "name": {
+        "signal": {
           "type": "string",
-          "description": "Custom signal slug."
+          "description": "Custom signal slug (the signal name). A built-in name answers 404 — built-ins are read-only."
         },
         "force": {
           "type": "boolean",
-          "description": "When true, skip the reference check and delete anyway. Default false."
+          "description": "When `true`, skip the reference check and delete. References will break on next recompile.",
+          "default": false
         }
       },
       "required": [
-        "name"
+        "signal"
       ]
     },
     "endpoint": {
       "method": "DELETE",
-      "path": "/v2/signals/{name}",
+      "path": "/v2/signals/{signal}",
       "paramLocation": {
-        "name": "path",
+        "signal": "path",
         "force": "query"
       }
     }
   },
   {
+    "name": "tickerbot_get_signal",
+    "description": "The state of a signal is the set of tickers matching it right now, or with `asof`, as of any moment. One name, the whole market, one call. Booleans need no `condition`; numerics need one like \">70\". Sorted by signal value desc for numerics.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "signal": {
+          "type": "string",
+          "description": "A signal name. Booleans (e.g. `golden_cross`, `above_sma_50`) are detected automatically; numerics (e.g. `rsi_14`, `market_cap`, `pe_ratio`) require a condition."
+        },
+        "asof": {
+          "type": "string",
+          "description": "Optional. Target moment as `YYYY-MM-DD` (that day's close) or an ISO timestamp (that intraday moment) — the same read as it stood then, unlimited depth. Full contract under As of a past date."
+        },
+        "interval": {
+          "type": "string",
+          "description": "Grain the past state is reconstructed at: `1m`, `1h`, `1d`, or `auto` (default). Only valid alongside `asof` — a live read with `interval` is a 400. Details under As of a past date.",
+          "enum": [
+            "1m",
+            "1h",
+            "1d",
+            "auto"
+          ],
+          "default": "auto"
+        },
+        "condition": {
+          "type": "string",
+          "description": "Required for numeric signals. Single bound, format `<op><value>`. Operators: `>`, `>=`, `=`, `!=`, `<`, `<=`. Examples: `>70`, `<=200`, `!=0`. Sending one with a boolean or custom signal returns 400 (it does not apply)."
+        },
+        "universe": {
+          "type": "string",
+          "description": "Optional. Scope to a system or caller-owned universe slug."
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Page size. Max 200.",
+          "default": 50
+        },
+        "cursor": {
+          "type": "string",
+          "description": "Opaque cursor from the previous response."
+        },
+        "sort_by": {
+          "type": "string",
+          "description": "Row order: `default` (alphabetic for booleans, highest-value-first for numerics) or `market_cap` (desc NULLS LAST; adds `market_cap` to each row). Live only — with `asof` it is a 400 (the snapshot's order is fixed).",
+          "enum": [
+            "default",
+            "market_cap"
+          ],
+          "default": "default"
+        },
+        "include_active_since": {
+          "type": "boolean",
+          "description": "Built-in booleans only: adds `active_since` and `days_live` per row — the first day of the current true streak, from daily state (the day after the last false day; if the boolean has never been false since it first computed, the first true day). Looks back five years, so a boolean true for longer reports the window edge as a lower bound. Live only — a 400 with `asof`.",
+          "default": false
+        }
+      },
+      "required": [
+        "signal"
+      ]
+    },
+    "endpoint": {
+      "method": "GET",
+      "path": "/v2/signals/{signal}",
+      "paramLocation": {
+        "signal": "path",
+        "asof": "query",
+        "interval": "query",
+        "condition": "query",
+        "universe": "query",
+        "limit": "query",
+        "cursor": "query",
+        "sort_by": "query",
+        "include_active_since": "query"
+      }
+    }
+  },
+  {
+    "name": "tickerbot_subscribe_signal",
+    "description": "Push one signal: we POST your endpoint whenever any ticker starts matching it. Webhooks need a paid plan (Free has no webhook slots). Omit `ticker` to watch the whole universe.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "signal": {
+          "type": "string",
+          "description": "Signal name from the schema (case-insensitive)."
+        },
+        "condition": {
+          "type": "string",
+          "description": "Required for numeric signals. Shape: `\">70\"`, `\"<30\"`, `\">=100\"`, `\"=50\"`. Sending one with a boolean or custom signal returns 400 (it does not apply)."
+        },
+        "ticker": {
+          "type": "string",
+          "description": "Restrict to a single ticker. Default: any ticker."
+        },
+        "universe": {
+          "type": "string",
+          "description": "Restrict to a system or user-owned universe (e.g. `top_100`). `universe_id` accepted as an alias. Unknown universes are a 404 `universe_not_found`."
+        },
+        "target_url": {
+          "type": "string",
+          "description": "https:// URL to POST when fired. Omit for in-app delivery."
+        },
+        "channel": {
+          "type": "string",
+          "description": "Delivery channel. `webhook` (POST to `target_url`), `discord` (post an embed to `discord_url`), `in_app` (dashboard only), or `mobile_push` (notify a phone signed in to the Tickerbot mobile app; requires a `device_id` from `POST /v2/devices/register`). Inferred when omitted: `webhook` if `target_url` is set, `discord` if `discord_url` is set, else `in_app`. `slack` is reserved and returns `501`. See the Delivery channels guide.",
+          "enum": [
+            "webhook",
+            "discord",
+            "in_app",
+            "mobile_push"
+          ]
+        },
+        "discord_url": {
+          "type": "string",
+          "description": "Discord incoming-webhook URL (`https://discord.com/api/webhooks/…`). Required when `channel` is `discord`. Stored as a posting credential: the create response echoes it back under `channel_config`, but every later read (list, get, deliveries) strips it and sets `channel_config_present: true` instead."
+        },
+        "device_id": {
+          "type": "string",
+          "description": "Device to notify, from `POST /v2/devices/register`. Required when `channel` is `mobile_push`; unknown ids are a 404 `device_not_found`."
+        },
+        "cadence": {
+          "type": "string",
+          "description": "`realtime` (the default) is evaluated on every data refresh (~1×/min); `hourly` and `nyse_open` throttle to a batch schedule. `1m` is a deprecated alias for `realtime`.",
+          "enum": [
+            "realtime",
+            "hourly",
+            "nyse_open"
+          ]
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable label (up to 80 chars). Defaults to the predicate — `at_52w_high` for a boolean, `rsi_14 > 70` for a numeric, prefixed with `<TICKER>: ` when `ticker` scopes it."
+        },
+        "columns": {
+          "type": "string",
+          "description": "Comma-separated extra signals to include in each fired payload match row, beyond the standard set (`ticker`, `name`, `asset_type`, `price`, `change_1d_pct`, `market_cap`). Each must be a real signal; an unknown signal is rejected at creation. `fields` accepted as an alias — and note the RESPONSE reports them under `fields`, as an array."
+        },
+        "order": {
+          "type": "string",
+          "description": "Signal the fired payload's match lists are sorted by before the 100-row cap is applied, so a truncated list is the deterministic top 100 rather than an arbitrary sample. Must be a real signal (validated at creation).",
+          "default": "market_cap"
+        },
+        "dir": {
+          "type": "string",
+          "description": "Sort direction for `order`.",
+          "enum": [
+            "asc",
+            "desc"
+          ],
+          "default": "desc"
+        }
+      },
+      "required": [
+        "signal"
+      ]
+    },
+    "endpoint": {
+      "method": "POST",
+      "path": "/v2/signals/{signal}/subscribe",
+      "paramLocation": {
+        "signal": "path",
+        "condition": "body",
+        "ticker": "body",
+        "universe": "body",
+        "target_url": "body",
+        "channel": "body",
+        "discord_url": "body",
+        "device_id": "body",
+        "cadence": "body",
+        "name": "body",
+        "columns": "body",
+        "order": "body",
+        "dir": "body"
+      }
+    }
+  },
+  {
     "name": "tickerbot_scan",
-    "description": "Run a SQL WHERE clause against the live ticker universe (or against a past moment with `asof` — unlimited depth on every plan). Returns matching tickers sorted by chosen column, OR — with `group_by` — aggregate rollups instead of rows (breadth stats: \"count of tickers above their 200dma by sector\", \"median RSI by sector on 2026-03-03\"). The `q` grammar is a flat WHERE: column names from the schema, AND/OR/NOT, comparison operators, numeric/string literals. No JOIN or subqueries. Example: `gap_up AND market_cap < 2000000000 AND NOT earnings_this_week`.",
+    "description": "Every ticker matching a SQL WHERE clause. Right now, or with `asof`, as of any past date. The `q` grammar is a flat SQL WHERE over signal names: AND/OR/NOT, comparisons, numeric and string literals, custom signals by name. No JOIN or subqueries. With `group_by` the result is rollup rows, not tickers. Example: `gap_up AND market_cap < 2000000000 AND NOT earnings_this_week`.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "q": {
           "type": "string",
-          "description": "SQL WHERE expression. Max 4000 chars."
-        },
-        "universe": {
-          "type": "string",
-          "description": "Optional universe slug."
+          "description": "SQL WHERE expression. Max 4000 chars; semicolons, comments and write keywords are rejected. Your custom signals are valid here — each expands to its SQL at run time."
         },
         "asof": {
           "type": "string",
-          "description": "Optional YYYY-MM-DD or ISO timestamp for a historical scan. Unlimited depth on every plan."
+          "description": "Optional. Target moment as `YYYY-MM-DD` (that day's close) or an ISO timestamp (that intraday moment) — the same read as it stood then, unlimited depth. Full contract under As of a past date."
+        },
+        "interval": {
+          "type": "string",
+          "description": "Grain the past state is reconstructed at: `1m`, `1h`, `1d`, or `auto` (default). Only valid alongside `asof` — a live read with `interval` is a 400. Details under As of a past date.",
+          "enum": [
+            "1m",
+            "1h",
+            "1d",
+            "auto"
+          ],
+          "default": "auto"
         },
         "order": {
           "type": "string",
-          "description": "Sort column. Default day_change_pct (rows) / tickers (aggregate)."
+          "description": "Signal to sort by. In aggregate mode the default is the count alias `tickers` — or, with a custom `select`, the last item's alias — sorted NULLS LAST with the group keys as tiebreak.",
+          "default": "change_1d_pct"
         },
         "dir": {
           "type": "string",
@@ -651,35 +618,46 @@ export const tools: readonly ToolDef[] = [
           "enum": [
             "asc",
             "desc"
-          ]
-        },
-        "fields": {
-          "type": "string",
-          "description": "Comma-separated extra columns to include (row mode only)."
-        },
-        "group_by": {
-          "type": "string",
-          "description": "AGGREGATE MODE: 1–6 comma-separated group keys (columns or expressions, e.g. `sector`). Results become rollup rows instead of tickers."
-        },
-        "select": {
-          "type": "string",
-          "description": "Aggregate output items (requires group_by). Default: group keys + COUNT(*) AS tickers. Aggregates: count/avg/sum/min/max/stddev/string_agg + FILTER (WHERE …). Alias items with AS. Example: `sector, COUNT(*) AS n, AVG(rsi_14) AS avg_rsi`."
-        },
-        "having": {
-          "type": "string",
-          "description": "Aggregate filter (requires group_by). Example: `COUNT(*) >= 10`."
+          ],
+          "default": "desc"
         },
         "limit": {
           "type": "integer",
-          "description": "Page size. Max 100. Default 50. Aggregate mode does not paginate — response sets `truncated: true` when groups were cut."
+          "description": "Page size. Max 100. Aggregate mode does not paginate — it sets `truncated: true` when groups were cut, so sort with `order` to keep the ones you want.",
+          "default": 50
         },
         "cursor": {
           "type": "string",
-          "description": "Opaque cursor (row mode only)."
+          "description": "Opaque cursor from the previous response's `next_cursor`. Row mode only."
+        },
+        "columns": {
+          "type": "string",
+          "description": "Extra signals per row, ADDITIVE — the defaults are always present (ticker, name, asset_class, asset_type, price, change_1d_pct, gap_pct, relative_volume, market_cap). `fields` accepted as an alias."
         },
         "full": {
           "type": "boolean",
-          "description": "Row mode: return the FULL wide row for each match (every column) instead of the slim default projection."
+          "description": "Return every signal instead of the default set. Mutually exclusive with `columns` — passing both is a 400.",
+          "default": false
+        },
+        "universe": {
+          "type": "string",
+          "description": "Slug of a system universe (`top_10`, `top_100`) or one of your own. Omitted, the scan runs across all ~21,033 tracked tickers."
+        },
+        "asset_class": {
+          "type": "string",
+          "description": "One or more asset classes — slug or comma-separated list (`stocks`, `rates`, `crypto`, `fx`). Validated for shape, not against a fixed list, so a well-formed class we don't track simply matches nothing. Echoed in `query`."
+        },
+        "group_by": {
+          "type": "string",
+          "description": "AGGREGATE MODE: 1–6 group keys (signals, expressions, or one of your custom signals as a boolean key). Results become rollup rows. Name a key with `AS` to choose its JSON key (`market_cap > 1e11 AS mega`); an un-named expression is named for you rather than returned as `?column?`. Incompatible with `columns`/`full`/`cursor`; works with `asof`."
+        },
+        "select": {
+          "type": "string",
+          "description": "Aggregate output items (requires `group_by`). Default: the group keys + `COUNT(*) AS tickers`. Supports count/avg/sum/min/max/stddev/string_agg/bool_and/bool_or plus `FILTER (WHERE …)`, and your custom signals inside expressions. Alias with `AS`; a last item without one is a 400."
+        },
+        "having": {
+          "type": "string",
+          "description": "Filter the aggregate rows (requires `group_by`). Custom signals are valid here too."
         }
       },
       "required": [
@@ -687,46 +665,686 @@ export const tools: readonly ToolDef[] = [
       ]
     },
     "endpoint": {
-      "method": "GET",
+      "method": "POST",
       "path": "/v2/scan",
       "paramLocation": {
-        "q": "query",
-        "universe": "query",
+        "q": "body",
+        "asof": "body",
+        "interval": "body",
+        "order": "body",
+        "dir": "body",
+        "limit": "body",
+        "cursor": "body",
+        "columns": "body",
+        "full": "body",
+        "universe": "body",
+        "asset_class": "body",
+        "group_by": "body",
+        "select": "body",
+        "having": "body"
+      }
+    }
+  },
+  {
+    "name": "tickerbot_subscribe_scan",
+    "description": "Push a whole query: we POST your endpoint every time the match set changes. Webhooks need a paid plan (Free has no webhook slots). Use for \"alert me when this happens\" requests.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "q": {
+          "type": "string",
+          "description": "WHERE-clause expression using signal names — the same grammar and the same 4000-char cap as `POST /v2/scan`, so anything scannable is subscribable. Custom signals are expanded and frozen in at creation."
+        },
+        "universe": {
+          "type": "string",
+          "description": "System or user-owned universe to scope the scan. `universe_id` accepted as an alias. Unknown universes are a 404 `universe_not_found`."
+        },
+        "target_url": {
+          "type": "string",
+          "description": "https:// URL to POST when the match set changes. Omit for in-app delivery."
+        },
+        "channel": {
+          "type": "string",
+          "description": "Delivery channel. `webhook` (POST to `target_url`), `discord` (embed to `discord_url`), `in_app` (dashboard only), or `mobile_push` (requires a `device_id` from `POST /v2/devices/register`). Inferred when omitted: `webhook` if `target_url` is set, `discord` if `discord_url` is set, else `in_app`. `slack` is reserved and returns `501`.",
+          "enum": [
+            "webhook",
+            "discord",
+            "in_app",
+            "mobile_push"
+          ]
+        },
+        "discord_url": {
+          "type": "string",
+          "description": "Discord incoming-webhook URL. Required when `channel` is `discord`. Stored as a posting credential: the create response echoes it back under `channel_config`, but every later read (list, get, deliveries) strips it and sets `channel_config_present: true` instead."
+        },
+        "device_id": {
+          "type": "string",
+          "description": "Device to notify, from `POST /v2/devices/register`. Required when `channel` is `mobile_push`; unknown ids are a 404 `device_not_found`."
+        },
+        "cadence": {
+          "type": "string",
+          "description": "`realtime` (the default) is evaluated on every data refresh (~1×/min); `hourly` and `nyse_open` throttle to a batch schedule. `1m` is a deprecated alias for `realtime`.",
+          "enum": [
+            "realtime",
+            "hourly",
+            "nyse_open"
+          ]
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable label (up to 80 chars). Defaults to `scan: <q>`."
+        },
+        "columns": {
+          "type": "string",
+          "description": "Extra signals per fired payload match row, beyond the standard set (`ticker`, `name`, `asset_type`, `price`, `change_1d_pct`, `market_cap`). Each must be a real signal; unknown ones are rejected at creation. `fields` accepted as an alias — and the RESPONSE reports them under `fields`, as an array."
+        },
+        "order": {
+          "type": "string",
+          "description": "Signal the payload's match lists are sorted by before the 100-row cap applies, so a truncated list is the deterministic top 100 rather than an arbitrary sample. Must be a real signal (validated at creation).",
+          "default": "market_cap"
+        },
+        "dir": {
+          "type": "string",
+          "description": "Sort direction for `order`.",
+          "enum": [
+            "asc",
+            "desc"
+          ],
+          "default": "desc"
+        }
+      },
+      "required": [
+        "q"
+      ]
+    },
+    "endpoint": {
+      "method": "POST",
+      "path": "/v2/scan/subscribe",
+      "paramLocation": {
+        "q": "body",
+        "universe": "body",
+        "target_url": "body",
+        "channel": "body",
+        "discord_url": "body",
+        "device_id": "body",
+        "cadence": "body",
+        "name": "body",
+        "columns": "body",
+        "order": "body",
+        "dir": "body"
+      }
+    }
+  },
+  {
+    "name": "tickerbot_get_series",
+    "description": "Any signals for any tickers on one shared time grid — up to 50 tickers by 25 columns per call. One flat row per ticker per interval step, cursor-paged backward. `transitions_only: true` with boolean signals returns only the rows where a boolean flipped.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "tickers": {
+          "type": "string",
+          "description": "Comma-separated symbols, up to 50 (POST accepts a JSON array). Exactly one of `tickers` or `ticker` is required; when both are passed, `ticker` wins — so sending both silently narrows the request to one symbol."
+        },
+        "ticker": {
+          "type": "string",
+          "description": "Single-symbol form — `/v2/series?ticker=AAPL` is ticker history in its canonical spelling. Exactly one of `ticker` or `tickers` is required."
+        },
+        "columns": {
+          "type": "string",
+          "description": "Up to 25 columns (POST accepts an array): OHLCV names, signals, and your custom signals, freely mixed. Omitted → the ticker-history default set (price, change_1d_pct, relative_volume, market_cap), intersected with what the interval carries. At `1q`, `columns` is required and quarterly-only. `fields` accepted as an alias."
+        },
+        "interval": {
+          "type": "string",
+          "description": "Grid granularity. `1w` resamples the daily tier weekly (Monday-keyed); `1q` is the fiscal-quarter grid.",
+          "enum": [
+            "1m",
+            "1h",
+            "1d",
+            "1w",
+            "1q"
+          ],
+          "default": "1d"
+        },
+        "from": {
+          "type": "string",
+          "description": "Earliest timestamp (inclusive), `YYYY-MM-DD` or ISO. Intraday requests default to a recent window (`1m`: 7 days, `1h`: 60 days) — the cursor keeps walking further back window-by-window, or pass `from` to widen it up front."
+        },
+        "to": {
+          "type": "string",
+          "description": "Latest timestamp (inclusive), `YYYY-MM-DD` or ISO."
+        },
+        "asof": {
+          "type": "string",
+          "description": "Point-in-time read: ONE row per ticker — the state at that instant — rather than a range. `YYYY-MM-DD` or a full ISO timestamp, the same meaning `asof` carries on `/v2/tickers`, `/v2/scan` and `/v2/signals`. Cannot be combined with `from`/`to` or `cursor` (400) — a point and a window are contradictory, and `limit` has no meaning under it. It also resolves WHICH COMPANY held the symbol at that instant: a ticker that changed hands returns the row of whoever traded it then, so `tickers=SHLD&asof=2010-06-30` returns Sears Holdings' price and `asof=2026-01-01` returns the Global X defence ETF. Returns the most recent row at or before the instant, so a date inside a trading gap gives the last row before it. At `interval=1q` the anchor is the date the quarter was REPORTED (earnings release / filing), not fiscal period end — you get the latest quarter that was public knowledge at the instant, with restatements after it excluded."
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Grid steps per page (shared across tickers). Max 1000 — an over-cap `limit` is clamped to 1000 (house convention, `limit=10000` means \"max\"). Separately, tickers × limit may not exceed 25,000 rows per page — over THAT cap is an explicit 400.",
+          "default": 252
+        },
+        "cursor": {
+          "type": "string",
+          "description": "Opaque cursor from the previous response — every ticker pages backward in lockstep on the shared grid, no per-ticker gaps or duplicates."
+        },
+        "transitions_only": {
+          "type": "boolean",
+          "description": "Only rows where a boolean signal changed state. Accepted spellings: `true`/`1`/`yes` and `false`/`0`/`no` (case-insensitive) — anything else is a 400, never silently off. Requires at least one boolean signal (built-in boolean or custom signal); each returned row carries `transitions: {column: \"enter\"|\"exit\"}`, and `_meta` lists the driving columns. Strict truth: only literal `true` is \"on\", so `null → true` is an enter and `true → null` an exit (a backfill boundary reads as an edge). Edges need a prior observation — on the oldest page of a walk the first row has no predecessor and yields no edge. A flip is dated by the state table and does not move with the column list: one recorded on a non-trading carry row keeps that date, with any bar columns `null` on that row (no bar exists there)."
+        }
+      }
+    },
+    "endpoint": {
+      "method": "GET",
+      "path": "/v2/series",
+      "paramLocation": {
+        "tickers": "query",
+        "ticker": "query",
+        "columns": "query",
+        "interval": "query",
+        "from": "query",
+        "to": "query",
         "asof": "query",
-        "order": "query",
-        "dir": "query",
-        "fields": "query",
-        "group_by": "query",
-        "select": "query",
-        "having": "query",
         "limit": "query",
         "cursor": "query",
-        "full": "query"
+        "transitions_only": "query"
+      }
+    }
+  },
+  {
+    "name": "tickerbot_get_bars",
+    "description": "OHLCV bars from 1-second through monthly. The feed underneath the table.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "ticker": {
+          "type": "string",
+          "description": "Ticker symbol, or a comma-separated list (up to 50) for a bulk response keyed by symbol."
+        },
+        "interval": {
+          "type": "string",
+          "description": "Bar interval. `2h`/`4h` roll up hourly bars; `1w`/`1mo` roll up daily bars into calendar weeks (Monday start) and months — the bar's `t` is the bucket start (UTC), and with `asof` the last bucket is the week/month to date.",
+          "enum": [
+            "1s",
+            "1m",
+            "5m",
+            "15m",
+            "30m",
+            "1h",
+            "2h",
+            "4h",
+            "1d",
+            "1w",
+            "1mo"
+          ]
+        },
+        "from": {
+          "type": "string",
+          "description": "Window start (inclusive): `YYYY-MM-DD`, ISO timestamp, or epoch-ms. Combines with `to` for an explicit window; page within it using `cursor`. Mutually exclusive with `asof` and `before` (400)."
+        },
+        "to": {
+          "type": "string",
+          "description": "Window end (inclusive): a bare `YYYY-MM-DD` means through the end of that day, same as series. Mutually exclusive with `asof` and `before` (400)."
+        },
+        "asof": {
+          "type": "string",
+          "description": "Point-in-time: the most recent bar whose period had closed at or before that moment. A bare `YYYY-MM-DD` means that day's close. A full timestamp means the last FINISHED bar — at 10:00 ET on a Wednesday the day's close has not happened, so `1d` returns Tuesday's bar. Returns one bar unless you also pass `limit`, which gives the last `limit` closed bars. Mutually exclusive with `before`/`cursor` (400). Unlimited depth."
+        },
+        "adjusted": {
+          "type": "boolean",
+          "description": "Default `true`: prices are split-adjusted — restated after each later split, as the tape is, so a series is continuous across a split. `false` returns the price as it printed that day (a name that later did a 1:10 reverse split reads `21.4` adjusted and `2.14` on the tape), which is what a broker fill or a chart from that time shows. Volume scales the other way. Un-adjusted on read from the splits table; the store is untouched."
+        },
+        "session": {
+          "type": "string",
+          "description": "Sub-hour intervals only. `all` (default) includes pre- and post-market bars. `regular` keeps bars whose start is in 09:30–16:00 ET (DST-aware). Why you might want it: the vendor buckets trades by SIP report time, and late-reported off-exchange (Form T) prints on thin names can land 20 min to hours late in a pre-market minute — a `$1.70` print at 08:13 ET on a `$3.85` stock. Daily high/low are untouched by those. `limit` counts after the filter; paging still works.",
+          "enum": [
+            "all",
+            "regular"
+          ],
+          "default": "all"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Most-recent N bars. Max 1000 — an over-cap value is clamped, not an error.",
+          "default": 100
+        },
+        "before": {
+          "type": "string",
+          "description": "Return the N bars ending strictly before this date/timestamp — back-paging. Mutually exclusive with `cursor` (they are the same control — a 400 when both are sent)."
+        },
+        "cursor": {
+          "type": "string",
+          "description": "Continuation token from a prior response's `next_cursor`; sugar for `before` (sending both is a 400; a blank `cursor=` counts as absent), and the way to page inside a `from`/`to` window."
+        }
+      },
+      "required": [
+        "ticker",
+        "interval"
+      ]
+    },
+    "endpoint": {
+      "method": "GET",
+      "path": "/v2/bars/{ticker}/{interval}",
+      "paramLocation": {
+        "ticker": "path",
+        "interval": "path",
+        "from": "query",
+        "to": "query",
+        "asof": "query",
+        "adjusted": "query",
+        "session": "query",
+        "limit": "query",
+        "before": "query",
+        "cursor": "query"
+      }
+    }
+  },
+  {
+    "name": "tickerbot_list_events",
+    "description": "One timeline across every ticker: earnings, dividends, splits, insider filings, analyst actions, plus opt-in signal firings and news. Requires at least one bound: a ticker scope (ticker/tickers/universe), a time window (from/to), or firm/action — `q` alone is not a bound. `firm`/`action` match case-insensitively; a `q` payload match is case-sensitive. `join: state` attaches the ticker state as of each event.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "description": "Comma list of kinds. Omitted → the five corporate kinds; `signal` and `news` join only when named here.",
+          "enum": [
+            "earnings",
+            "dividend",
+            "split",
+            "insider",
+            "analyst",
+            "news",
+            "signal"
+          ]
+        },
+        "ticker": {
+          "type": "string",
+          "description": "Single-ticker filter. When both `ticker` and `tickers` are passed, `ticker` wins."
+        },
+        "tickers": {
+          "type": "string",
+          "description": "Comma list of tickers (max 50). Mutually exclusive with `universe`."
+        },
+        "universe": {
+          "type": "string",
+          "description": "Universe slug (`top_10`, `top_100`, or one of yours) to scope the stream. Mutually exclusive with `tickers`."
+        },
+        "firm": {
+          "type": "string",
+          "description": "Analyst-only structured filter — requires `kind=analyst` alone (`400` otherwise). Exact firm-name match on the ratings feed."
+        },
+        "action": {
+          "type": "string",
+          "description": "Analyst-only structured filter — requires `kind=analyst` alone. Same `action` vocabulary as Analyst actions.",
+          "enum": [
+            "upgrades",
+            "downgrades",
+            "initiates_coverage_on",
+            "maintains",
+            "reiterates",
+            "assumes",
+            "reinstates",
+            "suspends",
+            "terminates_coverage_on"
+          ]
+        },
+        "signal": {
+          "type": "string",
+          "description": "Signal-only filter — requires `kind=signal` alone (`400` otherwise). One built-in boolean signal; REQUIRED with `q` or `join=state` on that kind. See Signal firings."
+        },
+        "transition": {
+          "type": "string",
+          "description": "Signal-only filter — requires `kind=signal` alone. `enter` (false→true) or `exit` (true→false).",
+          "enum": [
+            "enter",
+            "exit"
+          ]
+        },
+        "from": {
+          "type": "string",
+          "description": "Events at/after this instant — strict ISO: `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM[:SS]Z`. A bare `YYYY-MM-DD` means from the start of that day. (`since` accepted as an alias.)"
+        },
+        "to": {
+          "type": "string",
+          "description": "Window end — same strict ISO subset. A bare `YYYY-MM-DD` means through the end of that day, matching bars/series/spans; a timestamp is exclusive (events strictly before it). (`until` accepted as an alias.)"
+        },
+        "q": {
+          "type": "string",
+          "description": "SQL WHERE over the projection — `ticker`, `ts`, `kind`, `payload` (plus ticker-state signals when `join=state`). When exactly ONE `kind` is named, that kind's payload fields are additionally first-class typed columns (`amount > 1`, `firm = 'Goldman Sachs'` — see each kind page for its list); multi-kind requests use `payload->>'…'`. Max 4000 chars. ANDs with the filter params."
+        },
+        "join": {
+          "type": "string",
+          "description": "Set to `state` to allow ticker-state signals in `q`/`select`/`group_by`/`having`, evaluated as of each event's timestamp (daily resolution).",
+          "enum": [
+            "state"
+          ]
+        },
+        "interval": {
+          "type": "string",
+          "description": "Grain the per-event state is reconstructed at, when `join=state`: `1m`, `1h`, `1d`, or `auto` (default). `auto` resolves to `1d` — the event set's tickers are not known before the query runs, and `1d` is the only tier covering the whole universe, so it is the only grain guaranteed to satisfy every event. An explicit `1m`/`1h` trades coverage for precision: events on tickers absent from that tier join to `null`. A referenced column the grain does not store is a `400`. Reported back as `_meta.state_interval`.",
+          "enum": [
+            "1m",
+            "1h",
+            "1d",
+            "auto"
+          ],
+          "default": "auto"
+        },
+        "select": {
+          "type": "string",
+          "description": "Aggregate-mode output columns (requires `group_by`). Default: group keys + `COUNT(*) AS events`. Same naming rule as `group_by` — alias with `AS`, or take the name derived for you."
+        },
+        "group_by": {
+          "type": "string",
+          "description": "Comma list of rollup keys — switches the response to aggregate rows. Columns (`kind`, `ticker`), payload fields (`firm`, or the explicit `payload->>'firm'`), and expressions over them all roll up. Name a key with `AS` to choose its JSON key: `payload->>'firm' AS firm`. Un-named keys are named for you — a payload read takes its key (`payload->>'firm'` → `firm`), a function keeps the function's name (`lower(ticker)` → `lower`), and anything else falls back to `group_1`, `group_2`."
+        },
+        "having": {
+          "type": "string",
+          "description": "Post-aggregation filter. Requires `group_by`."
+        },
+        "order": {
+          "type": "string",
+          "description": "Aggregate-mode sort — a bare column name or an output name only (put expressions in `select` and sort by their alias). A group key's name works too, whether you aliased it or it was named for you: `group_by=payload->>'firm' AS firm&order=firm`. Default: `events`. (Row mode is always newest-first.)"
+        },
+        "dir": {
+          "type": "string",
+          "description": "Aggregate-mode sort direction.",
+          "enum": [
+            "asc",
+            "desc"
+          ],
+          "default": "desc"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Page size (row modes) / max rollup rows (aggregate mode). Max 1000.",
+          "default": 50
+        },
+        "cursor": {
+          "type": "string",
+          "description": "Opaque cursor from the previous response — carries the original filters (and `q` when short), so pass it alone. Not valid with `group_by`."
+        }
+      }
+    },
+    "endpoint": {
+      "method": "GET",
+      "path": "/v2/events",
+      "paramLocation": {
+        "kind": "query",
+        "ticker": "query",
+        "tickers": "query",
+        "universe": "query",
+        "firm": "query",
+        "action": "query",
+        "signal": "query",
+        "transition": "query",
+        "from": "query",
+        "to": "query",
+        "q": "query",
+        "join": "query",
+        "interval": "query",
+        "select": "query",
+        "group_by": "query",
+        "having": "query",
+        "order": "query",
+        "dir": "query",
+        "limit": "query",
+        "cursor": "query"
+      }
+    }
+  },
+  {
+    "name": "tickerbot_subscribe_events",
+    "description": "Push new events: we POST your endpoint when events of the kinds you chose land in the archives. Webhooks need a paid plan (Free has no webhook slots). `q` filters the ticker STATE; `event_q` filters the EVENT payload in the /v2/events grammar. Latency is the ingest cadence (analyst ≤1h, corporate kinds daily), not sub-minute.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "kinds": {
+          "type": "string",
+          "description": "Event kinds to fire on — array or comma list.",
+          "enum": [
+            "earnings",
+            "dividend",
+            "split",
+            "insider",
+            "analyst"
+          ]
+        },
+        "tickers": {
+          "type": "string",
+          "description": "Scope to specific tickers (max 50). Mutually exclusive with `universe` — and with the singular alias `ticker` (sending both is a 400). Omit both for all tickers."
+        },
+        "ticker": {
+          "type": "string",
+          "description": "Single-symbol shorthand for `tickers`."
+        },
+        "universe": {
+          "type": "string",
+          "description": "Scope to a universe slug (`top_10`, `top_100`, or one of yours). `universe_id` accepted as an alias."
+        },
+        "q": {
+          "type": "string",
+          "description": "Optional row-STATE filter evaluated against the event's ticker at fire time. Same grammar as scan `q`; custom signals are expanded and frozen at creation."
+        },
+        "event_q": {
+          "type": "string",
+          "description": "Optional event-CONTENT filter in the `/v2/events` grammar — only `ticker`, `ts`, `kind`, `payload` may appear. Composes with `q`."
+        },
+        "target_url": {
+          "type": "string",
+          "description": "HTTPS delivery URL; or use `channel` + `discord_url`/`device_id`. Omit for in-app."
+        },
+        "channel": {
+          "type": "string",
+          "description": "Delivery channel. `slack` is reserved and returns `501`.",
+          "enum": [
+            "webhook",
+            "discord",
+            "in_app",
+            "mobile_push"
+          ]
+        },
+        "discord_url": {
+          "type": "string",
+          "description": "Discord incoming-webhook URL. Required when `channel` is `discord`. Stored as a posting credential: the create response echoes it back under `channel_config`, but every later read (list, get, deliveries) strips it and sets `channel_config_present: true` instead."
+        },
+        "device_id": {
+          "type": "string",
+          "description": "Device to notify, from `POST /v2/devices/register`. Required when `channel` is `mobile_push`; unknown ids are a 404 `device_not_found`."
+        },
+        "name": {
+          "type": "string",
+          "description": "Display name. Defaults to `events: <kinds> · <scope>`."
+        }
+      },
+      "required": [
+        "kinds"
+      ]
+    },
+    "endpoint": {
+      "method": "POST",
+      "path": "/v2/events/subscribe",
+      "paramLocation": {
+        "kinds": "body",
+        "tickers": "body",
+        "ticker": "body",
+        "universe": "body",
+        "q": "body",
+        "event_q": "body",
+        "target_url": "body",
+        "channel": "body",
+        "discord_url": "body",
+        "device_id": "body",
+        "name": "body"
+      }
+    }
+  },
+  {
+    "name": "tickerbot_search_news",
+    "description": "SQL query over the news archive. Article rows, or rollups when you group them. Filter to a ticker with the `ticker` param, or in `q` via the auto-unnest alias `tk = 'NVDA'`. `search` is full-text over title and summary. Rollups with group_by/having return `truncated: true` instead of paging.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "ticker": {
+          "type": "string",
+          "description": "Articles mentioning this symbol (ANDed with `q`)."
+        },
+        "tickers": {
+          "type": "string",
+          "description": "Comma list, up to 50 — articles mentioning ANY of them. Not combinable with `ticker` or `universe`."
+        },
+        "universe": {
+          "type": "string",
+          "description": "Universe slug — articles mentioning any member. Not combinable with `ticker`/`tickers`."
+        },
+        "from": {
+          "type": "string",
+          "description": "Earliest `time_published` (inclusive) — strict ISO: `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM[:SS]Z`. (`since` accepted as an alias.)"
+        },
+        "to": {
+          "type": "string",
+          "description": "Articles strictly before this instant — same strict ISO subset, matching `/v2/events`. (`until` accepted as an alias.)"
+        },
+        "search": {
+          "type": "string",
+          "description": "Full-text search over `title` + `summary` — websearch grammar: `apple earnings` (all words), `\"price target\"` (phrase), `chips OR semiconductors`, `-crypto` (negation). Max 200 chars. ANDs with `q` and the scoping params. Language-stemmed English."
+        },
+        "q": {
+          "type": "string",
+          "description": "WHERE clause over the news_article table. Max 4000 chars. Required UNLESS `search` or a scoping param (`ticker`/`tickers`/`universe`/`from`/`to`) is present — the simplest call needs no SQL. Queryable columns: `time_published`, `title`, `summary`, `source`, `source_domain`, `category`, `authors`, `topics`, `overall_sentiment_score`, `overall_sentiment_label`, `tickers`, `ticker_data`, `banner_image`, `url`, `id`, `created_at` — plus `tk`, the per-ticker UNNEST alias. Signal/state columns are not joinable here."
+        },
+        "order": {
+          "type": "string",
+          "description": "Sort — a bare column name or SELECT alias only (put expressions in `select` and order by their alias). Defaults to `time_published` (article rows) or `volume` (aggregate rows)."
+        },
+        "dir": {
+          "type": "string",
+          "description": "Sort direction.",
+          "enum": [
+            "asc",
+            "desc"
+          ],
+          "default": "desc"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Page size. Max 1000.",
+          "default": 50
+        },
+        "cursor": {
+          "type": "string",
+          "description": "Opaque pagination cursor from a prior response's `next_cursor`."
+        },
+        "group_by": {
+          "type": "string",
+          "description": "AGGREGATE MODE: comma-separated group keys, 1-6 (max 1000 chars). Switches the response to rollup rows. Use `tk` to roll up per ticker without writing the UNNEST. Name a key with `AS` to choose its JSON key; an un-named expression is named for you rather than returned as `?column?`."
+        },
+        "select": {
+          "type": "string",
+          "description": "Columns/expressions to return (max 2000 chars). Defaults to article columns (no `group_by`) or `<group_by cols>, COUNT(*) AS volume` (with `group_by`)."
+        },
+        "having": {
+          "type": "string",
+          "description": "HAVING clause on the aggregate (max 1000 chars). Requires `group_by`."
+        }
+      }
+    },
+    "endpoint": {
+      "method": "GET",
+      "path": "/v2/news",
+      "paramLocation": {
+        "ticker": "query",
+        "tickers": "query",
+        "universe": "query",
+        "from": "query",
+        "to": "query",
+        "search": "query",
+        "q": "query",
+        "order": "query",
+        "dir": "query",
+        "limit": "query",
+        "cursor": "query",
+        "group_by": "query",
+        "select": "query",
+        "having": "query"
+      }
+    }
+  },
+  {
+    "name": "tickerbot_get_etf_holdings",
+    "description": "Returns an ETF's constituents and their weights, heaviest first. When the ticker is not an ETF, `is_etf` is false and `holdings` is empty; `is_etf: true` with zero holdings means a real ETF whose holdings are not ingested yet. The reverse lookup (\"which ETFs hold NVDA\") is a scan filter on `etf_holders`, not this tool.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "ticker": {
+          "type": "string",
+          "description": "ETF symbol. Case-insensitive."
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max holdings returned. Max 5000. When the cap cuts the list, the response sets `truncated: true` and `total` (the ETF's full holding count) — raise `limit` to at least `total` to get the full set, possible whenever `total` is within the 5000 cap (an over-cap `limit` is clamped to 5000, not an error). No `truncated` in the response means the list is complete.",
+          "default": 500
+        }
+      },
+      "required": [
+        "ticker"
+      ]
+    },
+    "endpoint": {
+      "method": "GET",
+      "path": "/v2/etf/{ticker}/holdings",
+      "paramLocation": {
+        "ticker": "path",
+        "limit": "query"
+      }
+    }
+  },
+  {
+    "name": "tickerbot_get_etf_sectors",
+    "description": "Returns an ETF's sector weights, heaviest first. Always complete, since sector breakdowns are small. When the ticker is not an ETF, `is_etf` is false and `sectors` is empty.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "ticker": {
+          "type": "string",
+          "description": "ETF symbol. Case-insensitive."
+        }
+      },
+      "required": [
+        "ticker"
+      ]
+    },
+    "endpoint": {
+      "method": "GET",
+      "path": "/v2/etf/{ticker}/sectors",
+      "paramLocation": {
+        "ticker": "path"
       }
     }
   },
   {
     "name": "tickerbot_list_universes",
-    "description": "List universes — your saved ones and/or the built-in system universes (top_10, top_100). Filter with `owner` (like the signals catalog's `kind`): `me` (default, your own), `system` (built-ins), or `all` (both). Each row carries `system: true|false`.",
+    "description": "Every universe you can reference: your own named ticker lists and the built-in ones. `owner: system` lists the built-in universes (top_10, top_100); `all` lists both. Use a slug as `universe` on scan, signal, and subscribe tools.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "owner": {
           "type": "string",
-          "description": "Which universes to list.",
+          "description": "Which universes to list: `me` (your own), `system` (built-ins), or `all` (both).",
           "enum": [
             "me",
             "system",
             "all"
-          ]
+          ],
+          "default": "me"
         },
         "limit": {
           "type": "integer",
-          "description": "Page size (applies to your own; system universes are a small fixed set returned in full on the first page)."
+          "description": "Page size (applies to your own). Max 100.",
+          "default": 50
         },
         "cursor": {
           "type": "string",
-          "description": "Opaque cursor."
+          "description": "Opaque cursor from the previous response."
         }
       }
     },
@@ -741,21 +1359,50 @@ export const tools: readonly ToolDef[] = [
     }
   },
   {
-    "name": "tickerbot_list_system_universes",
-    "description": "List the built-in system universes (`top_10`, `top_100` — the most-actively-traded tickers by 30-day trailing dollar volume, rebalanced monthly). Available to every account regardless of plan. Use these slugs as `universe` in scans/signals or `universe_id` when subscribing.",
+    "name": "tickerbot_create_universe",
+    "description": "Create a named ticker list owned by your account.",
     "inputSchema": {
       "type": "object",
-      "properties": {}
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Human-readable label, up to 80 characters. Display-only — never used to reference the universe."
+        },
+        "tickers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Ticker symbols, up to 10,000. Validated against the active universe. `[]` is accepted — a shell universe you can fill later via PATCH."
+        },
+        "id": {
+          "type": "string",
+          "description": "Optional slug — becomes the universe's permanent handle everywhere (`?universe=`, subscribe `universe`, CRUD path). Pattern `^[a-z][a-z0-9_]{0,62}$` — starts with a lowercase letter, then lowercase letters/digits/underscore, 63 chars max; the value is trimmed and lowercased before validation. `top_10` and `top_100` are reserved for system universes and rejected with 400. Must be unique within your account. Generated (`u_…`) if omitted."
+        },
+        "description": {
+          "type": "string",
+          "description": "Free-form notes, up to 500 characters. Stored as `\"\"` when omitted."
+        }
+      },
+      "required": [
+        "name",
+        "tickers"
+      ]
     },
     "endpoint": {
-      "method": "GET",
-      "path": "/v2/universes/system",
-      "paramLocation": {}
+      "method": "POST",
+      "path": "/v2/universes",
+      "paramLocation": {
+        "name": "body",
+        "tickers": "body",
+        "id": "body",
+        "description": "body"
+      }
     }
   },
   {
     "name": "tickerbot_get_universe",
-    "description": "Get one universe by slug, including its ticker list.",
+    "description": "Returns the universe doc. Use `top_10`/`top_100` to fetch a system universe; any other slug must be one your account owns.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -777,50 +1424,8 @@ export const tools: readonly ToolDef[] = [
     }
   },
   {
-    "name": "tickerbot_create_universe",
-    "description": "Create a new universe (named set of tickers) for scoping future scans.",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "id": {
-          "type": "string",
-          "description": "Optional slug (lowercase letters, digits, underscore). Auto-generated from name if omitted. Must be unique within the account."
-        },
-        "name": {
-          "type": "string",
-          "description": "Human-readable name."
-        },
-        "description": {
-          "type": "string",
-          "description": "Optional free-form notes."
-        },
-        "tickers": {
-          "type": "array",
-          "description": "List of ticker symbols.",
-          "items": {
-            "type": "string"
-          }
-        }
-      },
-      "required": [
-        "name",
-        "tickers"
-      ]
-    },
-    "endpoint": {
-      "method": "POST",
-      "path": "/v2/universes",
-      "paramLocation": {
-        "id": "body",
-        "name": "body",
-        "description": "body",
-        "tickers": "body"
-      }
-    }
-  },
-  {
     "name": "tickerbot_update_universe",
-    "description": "Update one of the caller's universes. Pass `name`/`description` to relabel, `tickers` to replace the whole list, or `add`/`remove` to adjust subsets without replacing. System universes (`top_10`/`top_100`) cannot be edited.",
+    "description": "Update one of your universes: its name, description, or members. `tickers` replaces the whole list; `add`/`remove` adjust it. System universes cannot be edited.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -830,32 +1435,32 @@ export const tools: readonly ToolDef[] = [
         },
         "name": {
           "type": "string",
-          "description": "New label."
+          "description": "New label. Non-empty, max 80 characters."
         },
         "description": {
           "type": "string",
-          "description": "New notes."
+          "description": "New notes. Max 500 characters."
         },
         "tickers": {
           "type": "array",
-          "description": "Replace the full ticker list.",
           "items": {
             "type": "string"
-          }
+          },
+          "description": "Replace the full ticker list (up to 10,000; validated against the active universe). Does not combine with `add`/`remove` (400)."
         },
         "add": {
           "type": "array",
-          "description": "Add these tickers (deduplicated).",
           "items": {
             "type": "string"
-          }
+          },
+          "description": "Add these tickers (deduplicated)."
         },
         "remove": {
           "type": "array",
-          "description": "Remove these tickers.",
           "items": {
             "type": "string"
-          }
+          },
+          "description": "Remove these tickers."
         }
       },
       "required": [
@@ -877,13 +1482,18 @@ export const tools: readonly ToolDef[] = [
   },
   {
     "name": "tickerbot_delete_universe",
-    "description": "Delete one of the caller's universes. System universes (`top_10`/`top_100`) cannot be deleted. Webhooks that reference the deleted universe will fail on their next eval, so clean those up first.",
+    "description": "Permanently delete one of your universes. Webhooks that reference the deleted universe fail on their next eval — clean those up first.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "id": {
           "type": "string",
           "description": "Universe slug."
+        },
+        "force": {
+          "type": "boolean",
+          "description": "A universe still referenced by live webhooks refuses to delete with `409 universe_referenced`. Pass `force=true` to delete anyway — those webhooks will match nothing until re-pointed or deleted.",
+          "default": false
         }
       },
       "required": [
@@ -894,516 +1504,110 @@ export const tools: readonly ToolDef[] = [
       "method": "DELETE",
       "path": "/v2/universes/{id}",
       "paramLocation": {
-        "id": "path"
+        "id": "path",
+        "force": "query"
       }
     }
   },
   {
-    "name": "tickerbot_list_events",
-    "description": "THE events primitive — one timeline over every event log, cross-ticker: dividends, splits, insider transactions, and analyst actions (\"all splits this month\", \"every analyst action in my universe this week\", \"AAPL's full corporate history\" via `ticker`), plus two opt-in kinds that join only when named: `signal` (boolean-flag firings) and `news`. Rows are { ticker, ts, kind, payload }, newest first. Analyst payloads (history to 2012) carry firm/analyst/action/rating/price_target; filter them with `q` (payload->>'firm' = 'Goldman Sachs' AND payload->>'action' = 'downgrades') — actions: upgrades, downgrades, initiates_coverage_on, maintains, reiterates, assumes, reinstates, suspends, terminates_coverage_on. Speaks the SQL grammar over exactly (ticker, ts, kind, payload jsonb); `group_by`/`select`/`having` roll the stream up (aggregates return `truncated: true` instead of paginating); `join=state` attaches the ticker's state as of each event. Requires at least one bound: a ticker scope (ticker/tickers/universe) or a time window (from/to) — q alone is not a bound.",
+    "name": "tickerbot_list_webhooks",
+    "description": "Every webhook subscription on this account, newest first.",
     "inputSchema": {
       "type": "object",
       "properties": {
-        "kind": {
+        "status": {
           "type": "string",
-          "description": "Comma list of kinds to include. Default is the four corporate kinds: dividend, split, insider, analyst. Two more are opt-in and join only when named: `signal` (boolean-flag firings) and `news`."
-        },
-        "signal": {
-          "type": "string",
-          "description": "kind=signal only. One built-in boolean flag (e.g. golden_cross). REQUIRED to use `q` or `join` on kind=signal — naming the signal is what keeps the query on an index; optional otherwise."
-        },
-        "transition": {
-          "type": "string",
-          "description": "kind=signal only. `enter` (false->true) or `exit` (true->false). Always optional — an ordinary filter.",
+          "description": "Filter by status: `active` or `disabled` — the only two states a webhook has (`disabled` covers both a user pause and the automatic disable after repeated delivery failures; `consecutive_failures`/`last_error` on each record say which). Omit for all.",
           "enum": [
-            "enter",
-            "exit"
-          ]
-        },
-        "ticker": {
-          "type": "string",
-          "description": "Single-ticker filter, e.g. AAPL."
-        },
-        "tickers": {
-          "type": "string",
-          "description": "Comma-separated tickers, max 50. Mutually exclusive with `universe`."
-        },
-        "universe": {
-          "type": "string",
-          "description": "Universe slug (top_10, top_100, or a saved one) to scope the stream. Mutually exclusive with `tickers`."
-        },
-        "from": {
-          "type": "string",
-          "description": "Events at or after this ISO date/datetime (inclusive). `since` accepted as alias."
-        },
-        "to": {
-          "type": "string",
-          "description": "Events strictly before this ISO date/datetime (exclusive). `until` accepted as alias."
-        },
-        "join": {
-          "type": "string",
-          "description": "join=state attaches each event's ticker STATE as of that event's moment (the replay join) under a `state` key — \"downgrades where rsi_14 was already under 40\" composes with q. Free on every plan.",
-          "enum": [
-            "state"
-          ]
-        },
-        "interval": {
-          "type": "string",
-          "description": "Grain for join=state replay (finest covering tier by default).",
-          "enum": [
-            "1m",
-            "1h",
-            "1d"
-          ]
-        },
-        "q": {
-          "type": "string",
-          "description": "SQL WHERE over (ticker, ts, kind, payload jsonb) — ONLY those four identifiers. Payload fields via jsonb operators: payload->>'firm' = 'Goldman Sachs', (payload->>'shares')::numeric > 1e6. On kind=signal this requires `signal` (the firing log is ~175M rows); kind=signal takes no group_by."
-        },
-        "select": {
-          "type": "string",
-          "description": "Aggregate-mode output columns (requires group_by). Default: group keys + COUNT(*) AS events."
-        },
-        "group_by": {
-          "type": "string",
-          "description": "Comma list of rollup keys — switches to aggregate rows, e.g. payload->>'firm' AS firm, or kind."
-        },
-        "having": {
-          "type": "string",
-          "description": "Post-aggregation filter (requires group_by), e.g. COUNT(*) > 5."
-        },
-        "order": {
-          "type": "string",
-          "description": "Aggregate-mode sort column/alias. Default: events."
-        },
-        "dir": {
-          "type": "string",
-          "description": "Aggregate-mode sort direction.",
-          "enum": [
-            "asc",
-            "desc"
+            "active",
+            "disabled"
           ]
         },
         "limit": {
           "type": "integer",
-          "description": "Page size. Max 1000."
+          "description": "Page size. Max 100.",
+          "default": 50
         },
         "cursor": {
           "type": "string",
-          "description": "Opaque cursor from a prior response — carries the original filters, pass it alone (long q values must be resent alongside it)."
+          "description": "Opaque cursor from the previous response."
         }
       }
     },
     "endpoint": {
       "method": "GET",
-      "path": "/v2/events",
+      "path": "/v2/webhooks",
       "paramLocation": {
-        "kind": "query",
-        "ticker": "query",
-        "tickers": "query",
-        "universe": "query",
-        "from": "query",
-        "to": "query",
-        "join": "query",
-        "interval": "query",
-        "limit": "query",
-        "cursor": "query",
-        "q": "query",
-        "select": "query",
-        "group_by": "query",
-        "having": "query",
-        "order": "query",
-        "dir": "query",
-        "signal": "query",
-        "transition": "query"
-      }
-    }
-  },
-  {
-    "name": "tickerbot_subscribe_events",
-    "description": "Create an event-trigger webhook: fires when NEW events land — dividends, splits, insider filings, analyst actions (\"every split in my universe\", \"Goldman downgrades on large caps\"). TWO composable filters: `q` filters the event's TICKER STATE (market_cap > 1e10); `event_q` filters the EVENT CONTENT in the /v2/events grammar (payload->>'firm' = 'Goldman Sachs'). Paid plans (webhook slots). Deliveries carry event: \"events.fired\" with an events array. Latency = ingest cadence: analyst ≤1h, corporate kinds daily — NOT sub-minute like state webhooks.",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "kinds": {
-          "type": "string",
-          "description": "Comma list of kinds to fire on — any of: dividend, split, insider, analyst (e.g. \"split,analyst\"). NOTE: no enum here on purpose — a scalar enum would reject multi-kind values."
-        },
-        "tickers": {
-          "type": "string",
-          "description": "Scope to specific tickers (comma list, max 50). Mutually exclusive with universe; omit both for all tickers."
-        },
-        "universe": {
-          "type": "string",
-          "description": "Scope to a universe slug (top_10, top_100, or a saved one)."
-        },
-        "q": {
-          "type": "string",
-          "description": "Optional row-STATE filter evaluated against the event's ticker at fire time, e.g. market_cap > 1e10."
-        },
-        "event_q": {
-          "type": "string",
-          "description": "Optional event-CONTENT filter over (ticker, ts, kind, payload jsonb) — only those four identifiers, e.g. payload->>'firm' = 'Goldman Sachs' AND payload->>'action' = 'downgrades'."
-        },
-        "target_url": {
-          "type": "string",
-          "description": "HTTPS delivery URL. Omit for in-app delivery."
-        },
-        "channel": {
-          "type": "string",
-          "description": "Delivery channel.",
-          "enum": [
-            "webhook",
-            "discord",
-            "in_app",
-            "mobile_push"
-          ]
-        },
-        "discord_url": {
-          "type": "string",
-          "description": "Discord incoming-webhook URL (channel discord)."
-        },
-        "device_id": {
-          "type": "string",
-          "description": "Registered device id from the mobile app (channel mobile_push)."
-        },
-        "cadence": {
-          "type": "string",
-          "description": "Evaluation cadence. Default realtime; hourly/nyse_open throttle. (`1m` accepted as a deprecated alias of realtime.)",
-          "enum": [
-            "realtime",
-            "hourly",
-            "nyse_open"
-          ]
-        },
-        "name": {
-          "type": "string",
-          "description": "Display name."
-        }
-      },
-      "required": [
-        "kinds"
-      ]
-    },
-    "endpoint": {
-      "method": "POST",
-      "path": "/v2/events/subscribe",
-      "paramLocation": {
-        "kinds": "body",
-        "tickers": "body",
-        "universe": "body",
-        "q": "body",
-        "event_q": "body",
-        "target_url": "body",
-        "channel": "body",
-        "discord_url": "body",
-        "device_id": "body",
-        "cadence": "body",
-        "name": "body"
-      }
-    }
-  },
-  {
-    "name": "tickerbot_search_news",
-    "description": "Search the news archive (back to 2015) with a SQL WHERE clause. Available on every plan. Columns on news_article include `time_published`, `title`, `summary`, `source`, `source_domain`, `category`, `authors`, `topics`, `tickers` (array), `overall_sentiment_score`, `overall_sentiment_label`, `url`. To filter to one ticker use `'NVDA' = ANY(tickers)` or the auto-unnest alias `tk = 'NVDA'`. Example: `q=tk='NVDA' AND time_published >= NOW() - INTERVAL '1 day'`. Supports group_by + having for aggregation (e.g. count of articles per day).",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "q": {
-          "type": "string",
-          "description": "SQL WHERE on news_article. Required."
-        },
-        "select": {
-          "type": "string",
-          "description": "Comma-separated columns to include. Defaults to a slim set."
-        },
-        "group_by": {
-          "type": "string",
-          "description": "Comma-separated columns for aggregation."
-        },
-        "having": {
-          "type": "string",
-          "description": "WHERE-style filter on aggregates. Requires group_by."
-        },
-        "order": {
-          "type": "string",
-          "description": "Sort column or SELECT alias. Default time_published (non-aggregate) or volume (aggregate)."
-        },
-        "dir": {
-          "type": "string",
-          "description": "Sort direction.",
-          "enum": [
-            "asc",
-            "desc"
-          ]
-        },
-        "limit": {
-          "type": "integer",
-          "description": "Page size."
-        },
-        "cursor": {
-          "type": "string",
-          "description": "Opaque cursor."
-        }
-      },
-      "required": [
-        "q"
-      ]
-    },
-    "endpoint": {
-      "method": "GET",
-      "path": "/v2/news/scan",
-      "paramLocation": {
-        "q": "query",
-        "select": "query",
-        "group_by": "query",
-        "having": "query",
-        "order": "query",
-        "dir": "query",
+        "status": "query",
         "limit": "query",
         "cursor": "query"
       }
     }
   },
   {
-    "name": "tickerbot_subscribe_ticker",
-    "description": "Register a webhook that fires when one ticker matches a condition. `condition` is a SQL WHERE-clause fragment scoped to that ticker (e.g. \"rsi_14 > 70 AND relative_volume > 2\"). Pass `target_url` for an https POST, or `channel:\"discord\"` + `discord_url` to post to Discord; omit for in-app.",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "ticker": {
-          "type": "string",
-          "description": "Symbol."
-        },
-        "condition": {
-          "type": "string",
-          "description": "SQL WHERE fragment evaluated for this ticker."
-        },
-        "name": {
-          "type": "string",
-          "description": "Human-readable label."
-        },
-        "target_url": {
-          "type": "string",
-          "description": "Optional https URL for the `webhook` channel; omit for in-app."
-        },
-        "channel": {
-          "type": "string",
-          "description": "Delivery channel: `webhook` (POST to target_url), `discord` (embed to discord_url), `mobile_push` (to a registered device), or `in_app` (dashboard only). Inferred from the URL you pass if omitted.",
-          "enum": [
-            "webhook",
-            "discord",
-            "in_app",
-            "mobile_push"
-          ]
-        },
-        "discord_url": {
-          "type": "string",
-          "description": "Discord incoming-webhook URL (https://discord.com/api/webhooks/…). Required when channel is \"discord\"."
-        },
-        "device_id": {
-          "type": "string",
-          "description": "Registered device id from the mobile app. Required when channel is \"mobile_push\"."
-        },
-        "cadence": {
-          "type": "string",
-          "description": "Evaluation cadence. Default realtime; hourly/nyse_open throttle. (`1m` accepted as a deprecated alias of realtime.)",
-          "enum": [
-            "realtime",
-            "hourly",
-            "nyse_open"
-          ]
-        }
-      },
-      "required": [
-        "ticker",
-        "condition"
-      ]
-    },
-    "endpoint": {
-      "method": "POST",
-      "path": "/v2/tickers/{ticker}/subscribe",
-      "paramLocation": {
-        "ticker": "path",
-        "condition": "body",
-        "name": "body",
-        "target_url": "body",
-        "channel": "body",
-        "discord_url": "body",
-        "device_id": "body",
-        "cadence": "body"
-      }
-    }
-  },
-  {
-    "name": "tickerbot_subscribe_signal",
-    "description": "Register a webhook that fires when a signal turns true (booleans) or its value crosses a condition (numerics). Optional `ticker` restricts to one symbol; omit to watch the whole universe. Pass `target_url` for an https POST, or `channel:\"discord\"` + `discord_url` to post to Discord; omit for in-app.",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "signal": {
-          "type": "string",
-          "description": "Column name (e.g. golden_cross_today, rsi_14)."
-        },
-        "ticker": {
-          "type": "string",
-          "description": "Optional ticker to restrict the watch to one symbol."
-        },
-        "universe": {
-          "type": "string",
-          "description": "Optional universe slug."
-        },
-        "condition": {
-          "type": "string",
-          "description": "Required for numerics: single bound like \">70\" or \"<=200\". Ignored for booleans."
-        },
-        "name": {
-          "type": "string",
-          "description": "Human-readable label."
-        },
-        "target_url": {
-          "type": "string",
-          "description": "Optional https URL for the `webhook` channel; omit for in-app."
-        },
-        "channel": {
-          "type": "string",
-          "description": "Delivery channel: `webhook` (POST to target_url), `discord` (embed to discord_url), `mobile_push` (to a registered device), or `in_app` (dashboard only). Inferred from the URL you pass if omitted.",
-          "enum": [
-            "webhook",
-            "discord",
-            "in_app",
-            "mobile_push"
-          ]
-        },
-        "discord_url": {
-          "type": "string",
-          "description": "Discord incoming-webhook URL (https://discord.com/api/webhooks/…). Required when channel is \"discord\"."
-        },
-        "device_id": {
-          "type": "string",
-          "description": "Registered device id from the mobile app. Required when channel is \"mobile_push\"."
-        },
-        "cadence": {
-          "type": "string",
-          "description": "Evaluation cadence. Default realtime; hourly/nyse_open throttle. (`1m` accepted as a deprecated alias of realtime.)",
-          "enum": [
-            "realtime",
-            "hourly",
-            "nyse_open"
-          ]
-        }
-      },
-      "required": [
-        "signal"
-      ]
-    },
-    "endpoint": {
-      "method": "POST",
-      "path": "/v2/signals/{signal}/subscribe",
-      "paramLocation": {
-        "signal": "path",
-        "ticker": "body",
-        "universe": "body",
-        "condition": "body",
-        "name": "body",
-        "target_url": "body",
-        "channel": "body",
-        "discord_url": "body",
-        "device_id": "body",
-        "cadence": "body"
-      }
-    }
-  },
-  {
-    "name": "tickerbot_subscribe_scan",
-    "description": "Register a webhook that fires when matches for a scan query change. Pass `target_url` for an https POST, or `channel:\"discord\"` + `discord_url` to post an embed to Discord; omit for in-app delivery in the dashboard. `cadence` is real-time (1m) by default; throttle to hourly or nyse_open. Use to satisfy \"alert me when this happens\" prompts.",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "q": {
-          "type": "string",
-          "description": "SQL WHERE expression — same grammar as scan."
-        },
-        "name": {
-          "type": "string",
-          "description": "Human-readable label. Defaults to a truncated version of the query."
-        },
-        "universe": {
-          "type": "string",
-          "description": "Optional universe slug to scope the watch."
-        },
-        "target_url": {
-          "type": "string",
-          "description": "Optional https URL to POST matches to (the `webhook` channel). Omit for in-app delivery."
-        },
-        "channel": {
-          "type": "string",
-          "description": "Delivery channel: `webhook` (POST to target_url), `discord` (embed to discord_url), `mobile_push` (to a registered device), or `in_app` (dashboard only). Inferred from the URL you pass if omitted.",
-          "enum": [
-            "webhook",
-            "discord",
-            "in_app",
-            "mobile_push"
-          ]
-        },
-        "discord_url": {
-          "type": "string",
-          "description": "Discord incoming-webhook URL (https://discord.com/api/webhooks/…). Required when channel is \"discord\"."
-        },
-        "device_id": {
-          "type": "string",
-          "description": "Registered device id from the mobile app. Required when channel is \"mobile_push\"."
-        },
-        "cadence": {
-          "type": "string",
-          "description": "Evaluation cadence. Default realtime; hourly/nyse_open throttle. (`1m` accepted as a deprecated alias of realtime.)",
-          "enum": [
-            "realtime",
-            "hourly",
-            "nyse_open"
-          ]
-        }
-      },
-      "required": [
-        "q"
-      ]
-    },
-    "endpoint": {
-      "method": "POST",
-      "path": "/v2/scan/subscribe",
-      "paramLocation": {
-        "q": "body",
-        "name": "body",
-        "universe": "body",
-        "target_url": "body",
-        "channel": "body",
-        "discord_url": "body",
-        "device_id": "body",
-        "cadence": "body"
-      }
-    }
-  },
-  {
     "name": "tickerbot_create_webhook",
-    "description": "The canonical webhook create — POST /v2/webhooks with an explicit `trigger` object: { type: \"scan\" | \"ticker\" | \"signal\" | \"event\", … } plus delivery fields. The subscribe tools above are flat sugar over exactly this; use this form when composing the trigger programmatically or when a sugar door doesn't fit. Trigger shapes: scan {type:\"scan\", q, universe?}; ticker {type:\"ticker\", ticker, condition}; signal {type:\"signal\", signal, ticker?, universe?, condition?}; event {type:\"event\", kinds, tickers?, universe?, event_q?}.",
+    "description": "Canonical create: a webhook is a trigger plus a delivery. Trigger shapes: scan {type:\"scan\", q, universe?}; ticker {type:\"ticker\", ticker, condition}; signal {type:\"signal\", signal, ticker?, universe?, condition?}; event {type:\"event\", kinds, tickers?, universe?, event_q?}. The subscribe tools are flat sugar over exactly this. Webhooks need a paid plan (Free has no webhook slots).",
     "inputSchema": {
       "type": "object",
       "properties": {
         "trigger": {
           "type": "object",
-          "description": "What fires the webhook: { type: \"scan\" | \"ticker\" | \"signal\" | \"event\", … } — see the tool description for each shape."
-        },
-        "name": {
-          "type": "string",
-          "description": "Display name. Defaults from the trigger."
+          "description": "What fires the webhook. A discriminated object — `trigger.type` picks the shape, and the fields below belong inside it. Each shape is also available as a flat-params shortcut: `POST /v2/scan/subscribe`, `/v2/tickers/{t}/subscribe`, `/v2/signals/{s}/subscribe`, `/v2/events/subscribe`.",
+          "properties": {
+            "type": {
+              "type": "string",
+              "description": "Which trigger shape the rest of the object uses.",
+              "enum": [
+                "scan",
+                "ticker",
+                "signal",
+                "event"
+              ]
+            },
+            "q": {
+              "type": "string",
+              "description": "scan: required — the SQL WHERE any ticker must match to fire. ticker: required — WHERE fragment evaluated for that ticker (auto-scoped; don't add `ticker = …` yourself; `trigger.condition` accepted as an alias). event: optional row-STATE filter on the event's ticker at fire time (`market_cap > 1e10`)."
+            },
+            "signal": {
+              "type": "string",
+              "description": "signal: required — a built-in signal name (e.g. `rsi_14`) or one of your custom signals (custom SQL is expanded and frozen at creation)."
+            },
+            "condition": {
+              "type": "string",
+              "description": "signal: required for numeric signals — a single bound like `>70`; sending one with a boolean or custom signal returns 400 (it does not apply). ticker: accepted as the original alias of `trigger.q`."
+            },
+            "ticker": {
+              "type": "string",
+              "description": "ticker: required — the symbol to watch (e.g. `NVDA`). signal: optional — restrict the signal to one symbol (omit to watch the whole universe)."
+            },
+            "tickers": {
+              "type": "string",
+              "description": "event: optional symbol list, max 50 (e.g. `AAPL,NVDA`). Mutually exclusive with `trigger.universe`."
+            },
+            "kinds": {
+              "type": "string",
+              "description": "event: required — event kinds to fire on, array or comma list (e.g. `split,analyst`)."
+            },
+            "event_q": {
+              "type": "string",
+              "description": "event: optional event-CONTENT filter in the `/v2/events` grammar over `(ticker, ts, kind, payload)` — e.g. `payload->>'firm' = 'Goldman Sachs'`. Composes with `trigger.q`."
+            },
+            "universe": {
+              "type": "string",
+              "description": "scan / signal / event: optional universe slug (`top_10`, `top_100`, or one of yours) scoping which tickers can fire. Mutually exclusive with `trigger.tickers` on event."
+            }
+          },
+          "required": [
+            "type"
+          ]
         },
         "target_url": {
           "type": "string",
-          "description": "HTTPS delivery URL (`webhook` channel). Omit for in-app."
+          "description": "HTTPS delivery URL (the `webhook` channel), max 1024 characters. Omit for in-app delivery, or use `channel` + `discord_url`/`device_id` for other channels."
         },
         "channel": {
           "type": "string",
-          "description": "Delivery channel. Inferred from the URL you pass if omitted.",
+          "description": "Delivery channel. See Delivery channels.",
           "enum": [
             "webhook",
             "discord",
@@ -1413,24 +1617,43 @@ export const tools: readonly ToolDef[] = [
         },
         "discord_url": {
           "type": "string",
-          "description": "Discord incoming-webhook URL (channel discord)."
+          "description": "Discord webhook URL (channel `discord`)."
         },
         "device_id": {
           "type": "string",
-          "description": "Registered device id from the mobile app (channel mobile_push)."
+          "description": "Registered device id (channel `mobile_push`, see /v2/devices)."
         },
         "cadence": {
           "type": "string",
-          "description": "Evaluation cadence. Default realtime. (`1m` accepted as a deprecated alias of realtime.)",
+          "description": "Evaluation cadence — a user preference — never gated. Event triggers deliver on ingest — only `realtime` is accepted on them (400 otherwise).",
           "enum": [
             "realtime",
             "hourly",
             "nyse_open"
-          ]
+          ],
+          "default": "realtime"
+        },
+        "name": {
+          "type": "string",
+          "description": "Display name, max 80 characters. Defaults to an auto-generated one from the trigger."
         },
         "columns": {
           "type": "string",
-          "description": "Comma list of extra columns to include with each delivered match (`fields` accepted as alias)."
+          "description": "Extra columns echoed in fired payloads' match rows (`fields` accepted as an alias). Not accepted on `event` triggers (400) — event deliveries carry the event payload, not state rows."
+        },
+        "order": {
+          "type": "string",
+          "description": "Signal the fired payload's match lists are sorted by before the 100-row cap is applied — so a truncated list is the deterministic top 100, not an arbitrary sample. Same contract as `POST /v2/scan`. Not accepted on `event` triggers (they deliver one event at a time).",
+          "default": "market_cap"
+        },
+        "dir": {
+          "type": "string",
+          "description": "Sort direction for `order`. Not accepted on `event` triggers (400).",
+          "enum": [
+            "asc",
+            "desc"
+          ],
+          "default": "desc"
         }
       },
       "required": [
@@ -1442,33 +1665,58 @@ export const tools: readonly ToolDef[] = [
       "path": "/v2/webhooks",
       "paramLocation": {
         "trigger": "body",
-        "name": "body",
         "target_url": "body",
         "channel": "body",
         "discord_url": "body",
         "device_id": "body",
         "cadence": "body",
-        "columns": "body"
+        "name": "body",
+        "columns": "body",
+        "order": "body",
+        "dir": "body"
       }
     }
   },
   {
-    "name": "tickerbot_patch_webhook",
-    "description": "Edit a webhook in place: `name`, `cadence`, `target_url`, `enabled` (pausing/resuming without losing match-state). The trigger (q) and channel are immutable by design — delete and re-create to change what fires or where it delivers. Unknown fields are a 400, never silently ignored.",
+    "name": "tickerbot_get_webhook",
+    "description": "The current state of one webhook subscription.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "id": {
           "type": "string",
-          "description": "Webhook id (looks like `wh_…`)."
+          "description": "Webhook id returned by a subscribe endpoint (`POST /v2/tickers/{T}/subscribe`, etc.)."
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "endpoint": {
+      "method": "GET",
+      "path": "/v2/webhooks/{id}",
+      "paramLocation": {
+        "id": "path"
+      }
+    }
+  },
+  {
+    "name": "tickerbot_update_webhook",
+    "description": "Edit a webhook in place — send only the fields you want to change. The trigger and channel are immutable — delete and re-create to change what fires or where it delivers. Unknown fields are a 400.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Webhook id."
         },
         "name": {
           "type": "string",
-          "description": "New display name."
+          "description": "New display name. Non-empty, max 80 characters."
         },
         "cadence": {
           "type": "string",
-          "description": "New evaluation cadence.",
+          "description": "Evaluation cadence. A user preference — never gated. Event triggers deliver on ingest — only `realtime` is accepted on them (400 otherwise).",
           "enum": [
             "realtime",
             "hourly",
@@ -1477,11 +1725,11 @@ export const tools: readonly ToolDef[] = [
         },
         "target_url": {
           "type": "string",
-          "description": "New HTTPS delivery URL."
+          "description": "New https:// delivery URL (webhook channel only — a Discord/mobile subscription 400s here). `null` or empty switches to in-app delivery; `status` is untouched — a disabled webhook stays disabled until `POST /v2/webhooks/{id}/enable` (the only path that re-checks your account's webhook cap)."
         },
         "enabled": {
           "type": "boolean",
-          "description": "false pauses deliveries; true resumes. (Re-enabling after auto-disable also works via tickerbot_enable_webhook, which additionally clears match-state.)"
+          "description": "`false` disables the webhook (status → `disabled`). `true` is a no-op unless disabled, in which case use `POST /v2/webhooks/{id}/enable` instead."
         }
       },
       "required": [
@@ -1501,49 +1749,14 @@ export const tools: readonly ToolDef[] = [
     }
   },
   {
-    "name": "tickerbot_list_webhooks",
-    "description": "List the caller's webhook subscriptions (rules created via the subscribe tools), newest-first. Use `status` to filter to active or disabled rules.",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "status": {
-          "type": "string",
-          "description": "Filter by status. Omit for all. (`pending_verification` = created but never successfully pinged.)",
-          "enum": [
-            "active",
-            "pending_verification",
-            "disabled"
-          ]
-        },
-        "limit": {
-          "type": "integer",
-          "description": "Page size. Max 100. Default 50."
-        },
-        "cursor": {
-          "type": "string",
-          "description": "Opaque cursor."
-        }
-      }
-    },
-    "endpoint": {
-      "method": "GET",
-      "path": "/v2/webhooks",
-      "paramLocation": {
-        "status": "query",
-        "limit": "query",
-        "cursor": "query"
-      }
-    }
-  },
-  {
-    "name": "tickerbot_get_webhook",
-    "description": "Fetch one webhook subscription by id (current state, match-set, schedule). Account-scoped: any key on the account can read any of the account's webhooks.",
+    "name": "tickerbot_delete_webhook",
+    "description": "Delete a webhook subscription, and its delivery history with it.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "id": {
           "type": "string",
-          "description": "Webhook id (looks like `wh_…`)."
+          "description": "Webhook id."
         }
       },
       "required": [
@@ -1551,7 +1764,7 @@ export const tools: readonly ToolDef[] = [
       ]
     },
     "endpoint": {
-      "method": "GET",
+      "method": "DELETE",
       "path": "/v2/webhooks/{id}",
       "paramLocation": {
         "id": "path"
@@ -1560,7 +1773,7 @@ export const tools: readonly ToolDef[] = [
   },
   {
     "name": "tickerbot_list_webhook_deliveries",
-    "description": "List recent deliveries (pings and fires) for a webhook, newest-first — for diagnosing failures. Returns metadata only (status, attempt, response code, error); the POST body is not stored.",
+    "description": "Recent deliveries for one webhook — what was sent, and what came back.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1579,11 +1792,16 @@ export const tools: readonly ToolDef[] = [
         },
         "from": {
           "type": "string",
-          "description": "Only deliveries created at/after this moment — epoch seconds or ISO datetime. (90-day retention on every plan.)"
+          "description": "Only deliveries created at/after this moment — epoch seconds, epoch milliseconds (13+ digits), or an ISO datetime (`since` is accepted as an alias). Delivery history is retained for 90 days; deleting a webhook deletes its delivery history with it."
+        },
+        "to": {
+          "type": "string",
+          "description": "Only deliveries created at/before this moment — same value grammar as `from`. A date-only value means through the end of that UTC day. `from` after `to` is a 400."
         },
         "limit": {
           "type": "integer",
-          "description": "Page size. Max 100. Default 50."
+          "description": "Page size. Max 100.",
+          "default": 50
         },
         "cursor": {
           "type": "string",
@@ -1601,37 +1819,15 @@ export const tools: readonly ToolDef[] = [
         "id": "path",
         "status": "query",
         "from": "query",
+        "to": "query",
         "limit": "query",
         "cursor": "query"
       }
     }
   },
   {
-    "name": "tickerbot_test_webhook",
-    "description": "Send a real-shape `webhook.fired` POST to the webhook's target_url synchronously, right now. The body is byte-identical to a real fire (same signing); the test marker rides in an `X-Tickerbot-Test: true` header. Returns the inline outcome (`delivered`, `http_status`, `elapsed_ms`, `error`). One-shot — a failed test never retries and never auto-disables the webhook. Fails with 400 if the webhook has no target_url (in-app deliveries have nothing to fire over the wire).",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "id": {
-          "type": "string",
-          "description": "Webhook id."
-        }
-      },
-      "required": [
-        "id"
-      ]
-    },
-    "endpoint": {
-      "method": "POST",
-      "path": "/v2/webhooks/{id}/test",
-      "paramLocation": {
-        "id": "path"
-      }
-    }
-  },
-  {
     "name": "tickerbot_enable_webhook",
-    "description": "Re-enable a disabled webhook — flips it back to `active` and clears its match-state so the next eval treats every currently-matching ticker as new. Use after fixing whatever caused auto-disable. No-op on an already-active webhook.",
+    "description": "Re-enable a disabled webhook and start it clean. Clears match-state, so the next eval treats every currently-matching ticker as new.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1653,14 +1849,14 @@ export const tools: readonly ToolDef[] = [
     }
   },
   {
-    "name": "tickerbot_delete_webhook",
-    "description": "Delete a webhook subscription by id. Use after listing webhooks when the user wants to remove an alert.",
+    "name": "tickerbot_test_webhook",
+    "description": "Send a real-shape test POST to your endpoint, instantly. One-shot: a failed test never retries and never auto-disables the webhook. 400 when the webhook has no target_url.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "id": {
           "type": "string",
-          "description": "Webhook id (looks like `wh_…`)."
+          "description": "Webhook id."
         }
       },
       "required": [
@@ -1668,8 +1864,8 @@ export const tools: readonly ToolDef[] = [
       ]
     },
     "endpoint": {
-      "method": "DELETE",
-      "path": "/v2/webhooks/{id}",
+      "method": "POST",
+      "path": "/v2/webhooks/{id}/test",
       "paramLocation": {
         "id": "path"
       }

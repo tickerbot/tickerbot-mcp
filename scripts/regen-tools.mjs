@@ -77,5 +77,14 @@ export function findTool(name: string): ToolDef | undefined {
 }
 `
 
-writeFileSync(out, HEADER + JSON.stringify(tools, null, 2) + FOOTER)
+// The server catalog carries derivation metadata (rail, page, endpoint.route
+// — TB-246 Part 4) that the client never needs; keep the snapshot to the
+// wire shape ToolDef declares.
+const snapshot = tools.map((t) => ({
+  name: t.name,
+  description: t.description,
+  inputSchema: t.inputSchema,
+  endpoint: { method: t.endpoint.method, path: t.endpoint.path, paramLocation: t.endpoint.paramLocation },
+}))
+writeFileSync(out, HEADER + JSON.stringify(snapshot, null, 2) + FOOTER)
 console.log(`wrote ${out}: ${tools.length} tools`)
