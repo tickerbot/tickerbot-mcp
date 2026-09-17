@@ -24,8 +24,10 @@ import {
 import { tools as bakedTools, type ToolDef } from './tools.js'
 import { runTool, ToolError } from './handler.js'
 
-const SERVER_NAME = '@tickerbot/mcp-server'
-const SERVER_VERSION = '0.1.0'
+import { createRequire } from 'node:module'
+// package.json is the one place the version lives; the hardcoded '0.1.0'
+// this replaced was reported to every client through 0.2.1.
+const { name: SERVER_NAME, version: SERVER_VERSION } = createRequire(import.meta.url)('../package.json') as { name: string; version: string }
 const DEFAULT_BASE_URL = 'https://api.tickerbot.io'
 const DISCOVERY_TIMEOUT_MS = 3000
 
