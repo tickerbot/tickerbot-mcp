@@ -252,6 +252,18 @@ export const tools: readonly ToolDef[] = [
     "inputSchema": {
       "type": "object",
       "properties": {
+        "kind": {
+          "type": "string",
+          "description": "Filter by kind (one or a comma list). Omit to return both.",
+          "enum": [
+            "builtin",
+            "custom"
+          ]
+        },
+        "search": {
+          "type": "string",
+          "description": "Case-insensitive text match on the name and description."
+        },
         "group": {
           "type": "string",
           "description": "One taxonomy group slug or a comma list (`technicals,fundamentals`). Groups and their categories are in `taxonomy`."
@@ -272,6 +284,10 @@ export const tools: readonly ToolDef[] = [
             "jsonb",
             "string[]"
           ]
+        },
+        "asset_class": {
+          "type": "string",
+          "description": "Signals that apply to this asset class (one or a comma list), e.g. `crypto`."
         },
         "refresh": {
           "type": "string",
@@ -294,22 +310,6 @@ export const tools: readonly ToolDef[] = [
             "custom"
           ]
         },
-        "kind": {
-          "type": "string",
-          "description": "Filter by kind. Omit to return both.",
-          "enum": [
-            "builtin",
-            "custom"
-          ]
-        },
-        "search": {
-          "type": "string",
-          "description": "Case-insensitive text match on the name and description."
-        },
-        "asset_class": {
-          "type": "string",
-          "description": "Signals that apply to this asset class (one or a comma list), e.g. `crypto`."
-        },
         "grain": {
           "type": "string",
           "description": "Signals with stored history at this grain (one or a comma list): what an as-of read or the history read can serve at it.",
@@ -325,7 +325,7 @@ export const tools: readonly ToolDef[] = [
         },
         "limit": {
           "type": "integer",
-          "description": "Page size over the whole list: your custom signals (newest first), then the built-ins A→Z. Max 500. Omitted, every matching signal comes back in one response."
+          "description": "Page size over the whole list: your custom signals (newest first), then the built-ins A→Z. Max 500 until 2027-01-12, then 100 (a larger value is clamped to the max, not an error; `next_cursor` pages the rest; see Deprecations). Omitted, every matching signal comes back in one response until 2027-01-12; after that a call pages at a default limit."
         },
         "cursor": {
           "type": "string",
@@ -337,13 +337,13 @@ export const tools: readonly ToolDef[] = [
       "method": "GET",
       "path": "/v2/signals",
       "paramLocation": {
+        "kind": "query",
+        "search": "query",
         "group": "query",
         "category": "query",
         "type": "query",
-        "refresh": "query",
-        "kind": "query",
-        "search": "query",
         "asset_class": "query",
+        "refresh": "query",
         "grain": "query",
         "select": "query",
         "limit": "query",
@@ -436,7 +436,7 @@ export const tools: readonly ToolDef[] = [
         },
         "limit": {
           "type": "integer",
-          "description": "Page size. Max 200.",
+          "description": "Page size. Max 200 until 2027-01-12, then 100 (a larger value is clamped to the max, not an error; `next_cursor` pages the rest; see Deprecations).",
           "default": 50
         },
         "cursor": {
@@ -563,6 +563,20 @@ export const tools: readonly ToolDef[] = [
           "type": "string",
           "description": "What each delivered match carries. Omitted: the scan default row plus the signal. A list of signal names: exactly those, `ticker` always included."
         },
+        "order": {
+          "type": "string",
+          "description": "Signal each delivery's match lists are sorted by before the 100-result cap applies, so a truncated list is the deterministic top 100 rather than an arbitrary sample. Must be a real signal (validated at creation).",
+          "default": "market_cap"
+        },
+        "dir": {
+          "type": "string",
+          "description": "Sort direction for `order`.",
+          "enum": [
+            "asc",
+            "desc"
+          ],
+          "default": "desc"
+        },
         "channel": {
           "type": "string",
           "description": "Delivery channel. `webhook` (POST to `target_url`), `discord` (embed to `discord_url`), `in_app` (dashboard only) or `mobile_push` (to `device_id`). Inferred when omitted: `webhook` if `target_url` is set, `discord` if `discord_url` is set, `mobile_push` if `device_id` is set, else `in_app`.",
@@ -611,6 +625,8 @@ export const tools: readonly ToolDef[] = [
         "condition": "body",
         "universe": "body",
         "select": "body",
+        "order": "body",
+        "dir": "body",
         "channel": "body",
         "target_url": "body",
         "discord_url": "body",
@@ -637,7 +653,7 @@ export const tools: readonly ToolDef[] = [
         },
         "ticker": {
           "type": "string",
-          "description": "One symbol or a comma-separated list (up to 1,000): just those tickers' identity records, in the usual order. A symbol we don't track is simply absent. For everything about each one, put the list in the path of Get a ticker."
+          "description": "One symbol or a comma-separated list (up to 50; more is a 400): just those tickers' identity records, in the usual order. A symbol we don't track is simply absent. For everything about each one, put the list in the path of Get a ticker."
         },
         "asset_class": {
           "type": "string",
@@ -645,7 +661,7 @@ export const tools: readonly ToolDef[] = [
         },
         "asset_type": {
           "type": "string",
-          "description": "Filter by instrument type WITHIN equities — the stored `asset_type` value (`CS`, `ETF`, `ADRC`, `PFD`, `FUND`, `UNIT`, `SP`, `ETS`, `WARRANT`, `RIGHT`, `ETN`, `ETV`), matched case-insensitively. `equity` is a convenience value expanding to the equity-like set. This is NOT an asset class: `asset_type=crypto` is rejected — use `asset_class=crypto`.",
+          "description": "Filter by instrument type WITHIN equities (one or a comma list) — the stored `asset_type` value (`CS`, `ETF`, `ADRC`, `PFD`, `FUND`, `UNIT`, `SP`, `ETS`, `WARRANT`, `RIGHT`, `ETN`, `ETV`), matched case-insensitively. `equity` is a convenience value expanding to the equity-like set. This is NOT an asset class: `asset_type=crypto` is rejected — use `asset_class=crypto`.",
           "enum": [
             "CS",
             "ETF",
@@ -664,7 +680,7 @@ export const tools: readonly ToolDef[] = [
         },
         "exchange": {
           "type": "string",
-          "description": "Filter by exchange name — the value results carry in their `exchange` field. MIC codes (`XNAS`, `XNYS`, `BATS`) are also accepted and match `exchange_mic`. A malformed value (non-letters, over 16 chars) is a 400."
+          "description": "Filter by exchange name (one or a comma list) — the value results carry in their `exchange` field. MIC codes (`XNAS`, `XNYS`, `BATS`) are also accepted and match `exchange_mic`. A malformed value (non-letters, over 16 chars) is a 400."
         },
         "active": {
           "type": "boolean",
@@ -758,15 +774,15 @@ export const tools: readonly ToolDef[] = [
       "properties": {
         "ticker": {
           "type": "string",
-          "description": "Ticker symbol, or a comma-separated list (up to 50) on one aligned grid."
+          "description": "Ticker symbol, or a comma-separated list (up to 50) on one aligned grid. A page holds at most 25,000 points in all (tickers × `limit`), so 50 tickers page at up to 500 points each."
         },
         "from": {
           "type": "string",
-          "description": "Earliest timestamp (inclusive), `YYYY-MM-DD` or ISO. At `1q` and `1y` it bounds the fiscal period end. Intraday requests default to a recent window (`1m`: 7 days, `1h`: 60 days) — the cursor keeps walking further back window-by-window, or pass `from` to widen it up front."
+          "description": "Window start, `YYYY-MM-DD` or ISO: a bare date starts at the beginning of that day, a timestamp is included. At `1q` and `1y` it bounds the fiscal period end. Intraday requests default to a recent window (`1m`: 7 days, `1h`: 60 days) — the cursor keeps walking further back window-by-window, or pass `from` to widen it up front."
         },
         "to": {
           "type": "string",
-          "description": "Latest timestamp (inclusive), `YYYY-MM-DD` or ISO. At `1m`/`1h` a bare date on `from` or `to` is the ET calendar day for stocks and ETFs, and the UTC day when the request includes crypto or FX."
+          "description": "Window end, `YYYY-MM-DD` or ISO. A bare date covers that whole day. A timestamp is included until 2027-01-12 and exclusive from then, as everywhere else (Deprecations). At `1m`/`1h` a bare date on `from` or `to` is the ET calendar day for stocks and ETFs, and the UTC day when the request includes crypto or FX. See Time windows."
         },
         "asof": {
           "type": "string",
@@ -791,7 +807,7 @@ export const tools: readonly ToolDef[] = [
         },
         "limit": {
           "type": "integer",
-          "description": "Grid steps per page. Max 1000 — an over-cap `limit` is clamped to 1000 (house convention, `limit=10000` means \"max\"). Separately, tickers × limit may not exceed 25,000 results per page — over THAT cap is an explicit 400.",
+          "description": "Grid steps per page. Max 1000 — an over-cap `limit` is clamped to 1000 (house convention, `limit=10000` means \"max\"). Separately, a page holds at most 25,000 points in all: tickers × `limit` over 25,000 is a 400 (50 tickers take `limit` up to 500; 25 take the full 1,000).",
           "default": 252
         },
         "cursor": {
@@ -939,11 +955,11 @@ export const tools: readonly ToolDef[] = [
         },
         "from": {
           "type": "string",
-          "description": "Window start (inclusive): `YYYY-MM-DD`, ISO timestamp or epoch-ms. Combines with `to` for an explicit window; page within it using `cursor`. Mutually exclusive with `asof` (400)."
+          "description": "Window start: `YYYY-MM-DD`, ISO timestamp or epoch-ms. A bare date starts at the beginning of that day; a timestamp is included. Combines with `to` for an explicit window; page within it using `cursor`. Mutually exclusive with `asof` (400). See Time windows."
         },
         "to": {
           "type": "string",
-          "description": "End at a time (inclusive): the newest bar returned is at or before it. A bare `YYYY-MM-DD` means through the end of that day, same as history. On sub-daily intervals a bare date on `from` or `to` is the ET calendar day for stocks and ETFs (the whole 04:00-20:00 ET session) and the UTC day for crypto and FX. Mutually exclusive with `asof` (400)."
+          "description": "Window end: `YYYY-MM-DD`, ISO timestamp or epoch-ms. A bare date covers that whole day. A timestamp is included until 2027-01-12 (the newest bar returned is at or before it) and exclusive from then, as everywhere else (Deprecations). On sub-daily intervals a bare date on `from` or `to` is the ET calendar day for stocks and ETFs (the whole 04:00-20:00 ET session) and the UTC day for crypto and FX. Mutually exclusive with `asof` (400). See Time windows."
         },
         "asof": {
           "type": "string",
@@ -1031,7 +1047,7 @@ export const tools: readonly ToolDef[] = [
   },
   {
     "name": "tickerbot_get_etf_holdings",
-    "description": "Returns an ETF's constituents and their weights, heaviest first, and its sector weights, for one ETF or a comma list of up to 50. Returns `holdings` and the sector mix `sectors`. When the ticker is not an ETF, `is_etf` is false and both are empty; `is_etf: true` with zero holdings means a real ETF whose holdings are not ingested yet. The reverse lookup (\"which ETFs hold NVDA\") is the `etf_holders` signal on tickerbot_get_ticker, or a scan: `'SMH' = ANY(etf_holders)`.",
+    "description": "Returns an ETF's constituents and their weights, heaviest first, and its sector weights, for one ETF or a comma list of up to 50. Returns `data.holdings` and the sector mix `data.sectors`. When the ticker is not an ETF, `is_etf` is false and both are empty; `is_etf: true` with zero holdings means a real ETF whose holdings are not ingested yet. The reverse lookup (\"which ETFs hold NVDA\") is the `etf_holders` signal on tickerbot_get_ticker, or a scan: `'SMH' = ANY(etf_holders)`.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1041,8 +1057,12 @@ export const tools: readonly ToolDef[] = [
         },
         "limit": {
           "type": "integer",
-          "description": "Max holdings returned, per ETF. Max 5000 until 2027-01-12, then 1000 (see Deprecations). When the cap cuts the list, the response sets `truncated: true` and `total` (the ETF's full holding count) — raise `limit` to at least `total` to get the full set, possible whenever `total` is within the cap (an over-cap `limit` is clamped to the max, not an error). No `truncated` in the response means the list is complete.",
+          "description": "Holdings per page, per ETF. Max 5000 until 2027-01-12, then 1000 (an over-cap `limit` is clamped to the max, not an error; see Deprecations). When more holdings follow the page, the ETF's object carries `truncated: true` and `total` (its full holding count), and `next_cursor` pages the rest.",
           "default": 500
+        },
+        "cursor": {
+          "type": "string",
+          "description": "Continue paging: the previous response's `next_cursor`, unchanged, with the same symbols and `limit`. On a comma list it carries each ETF's own position, so every ETF continues from its own last holding; a finished one returns an empty `holdings`."
         }
       },
       "required": [
@@ -1054,7 +1074,8 @@ export const tools: readonly ToolDef[] = [
       "path": "/v2/tickers/{ticker}/holdings",
       "paramLocation": {
         "ticker": "path",
-        "limit": "query"
+        "limit": "query",
+        "cursor": "query"
       },
       "accepts": {
         "symbol": "path"
@@ -1166,7 +1187,7 @@ export const tools: readonly ToolDef[] = [
         },
         "limit": {
           "type": "integer",
-          "description": "Page size (lists) / max rollups (aggregate mode). Max 1000.",
+          "description": "Page size (lists) / max groups (aggregate mode). A list takes up to 1000 until 2027-01-12, then 100, and pages the rest with `next_cursor`; a `group_by` rollup keeps up to 1000 groups and sets `truncated: true` past that. A larger value is clamped to the max, not an error; see Deprecations.",
           "default": 50
         },
         "cursor": {
@@ -1339,7 +1360,7 @@ export const tools: readonly ToolDef[] = [
         },
         "min_relevance": {
           "type": "number",
-          "description": "With `ticker` or `universe`: keeps an article only when it is about one of those tickers, meaning that ticker's `relevance` (0 to 1) is at least this value. `0.8` drops passing mentions. Omitted: every article that mentions them. `400` without a ticker scope; in `q`, filter the mention itself: `ticker = 'NVDA' AND relevance >= 0.8`."
+          "description": "Only with `ticker` or `universe`. Keeps an article only when it is about one of the tickers, meaning that ticker's `relevance` (0 to 1) is at least this value. `0.8` drops passing mentions. Omitted: every article that mentions them. `400` without a ticker scope; in `q`, filter the mention itself: `ticker = 'NVDA' AND relevance >= 0.8`."
         },
         "q": {
           "type": "string",
@@ -1372,7 +1393,7 @@ export const tools: readonly ToolDef[] = [
         },
         "limit": {
           "type": "integer",
-          "description": "Page size. Max 1000.",
+          "description": "Page size (articles) / max groups (a `group_by` rollup). Articles take up to 1000 until 2027-01-12, then 100, and page the rest with `next_cursor`; a rollup keeps up to 1000 groups and sets `truncated: true` past that. A larger value is clamped to the max, not an error; see Deprecations.",
           "default": 50
         },
         "cursor": {
@@ -1427,7 +1448,7 @@ export const tools: readonly ToolDef[] = [
         },
         "min_relevance": {
           "type": "number",
-          "description": "With `ticker` or `universe`: only articles about one of those tickers (its `relevance` at least this value, 0 to 1)."
+          "description": "Only with `ticker` or `universe`. Only articles about one of the tickers (its `relevance` at least this value, 0 to 1)."
         },
         "q": {
           "type": "string",
@@ -1489,7 +1510,7 @@ export const tools: readonly ToolDef[] = [
   },
   {
     "name": "tickerbot_list_universes",
-    "description": "Lists every universe you can use: your own ticker lists and the built-in ones. `owner: system` lists the built-in universes (top_10, top_100); `all` lists both. Use a slug as `universe` on scan, signal, and subscribe tools.",
+    "description": "Lists every universe you can use: your own ticker lists and the built-in ones. `kind: builtin` lists the built-in universes (top_10, top_100); omit it for yours; `builtin,custom` lists both. Use a slug as `universe` on scan, signal, and subscribe tools.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1775,7 +1796,7 @@ export const tools: readonly ToolDef[] = [
         },
         "kind": {
           "type": "string",
-          "description": "Event webhooks: the kinds to fire on, as on Subscribe to events.",
+          "description": "Only with event webhooks. The kinds to fire on, as on Subscribe to events.",
           "enum": [
             "dividend",
             "split",
@@ -1788,27 +1809,27 @@ export const tools: readonly ToolDef[] = [
         },
         "search": {
           "type": "string",
-          "description": "News webhooks: the full-text search, as on Subscribe to news."
+          "description": "Only with news webhooks. The full-text search, as on Subscribe to news."
         },
         "condition": {
           "type": "string",
-          "description": "Signal webhooks: the bound, in Get a signal's grammar (`<30`). On a ticker webhook it is the older name of `q`."
-        },
-        "q": {
-          "type": "string",
-          "description": "Scan, ticker, event and news webhooks: the filter, in the grammar of the subscribe that made the webhook. On an event webhook it replaces the whole filter. A change to the filters (`q`, `condition`, `universe`, `kind`, `ticker`, `search`, `min_relevance`) fires only on new matches; an edit of `select`, `order` or `dir` keeps what already matched."
+          "description": "Only with signal webhooks. The bound, in Get a signal's grammar (`<30`)."
         },
         "ticker": {
           "type": "string",
-          "description": "Event and news webhooks: the symbols, one or a comma list. Replaces a `universe` scope."
+          "description": "Only with event or news webhooks. The symbols, one or a comma list. Replaces a `universe` scope."
         },
         "universe": {
           "type": "string",
-          "description": "Scan, signal, event and news webhooks: the universe to scope to; `null` for the whole market. On event and news webhooks it replaces a `ticker` scope."
+          "description": "Only with scan, signal, event or news webhooks. The universe to scope to; `null` for the whole market. On event and news webhooks it replaces a `ticker` scope."
         },
         "min_relevance": {
           "type": "number",
-          "description": "News webhooks: the least relevance (0–1) a scoped ticker needs."
+          "description": "Only with news webhooks. The least relevance (0–1) a scoped ticker needs; the webhook needs a `ticker` or `universe` scope."
+        },
+        "q": {
+          "type": "string",
+          "description": "Only with scan, ticker, event or news webhooks. The filter, in the grammar of the subscribe that made the webhook. On an event webhook it replaces the whole filter. A change to the filters (`q`, `condition`, `universe`, `kind`, `ticker`, `search`, `min_relevance`) fires only on new matches; an edit of `select`, `order` or `dir` keeps what already matched."
         },
         "select": {
           "type": "string",
@@ -1816,11 +1837,11 @@ export const tools: readonly ToolDef[] = [
         },
         "order": {
           "type": "string",
-          "description": "Scan webhooks: the signal each delivery's match lists are sorted by."
+          "description": "Only with scan or signal webhooks. The signal each delivery's match lists are sorted by."
         },
         "dir": {
           "type": "string",
-          "description": "Scan webhooks: the sort direction for `order`.",
+          "description": "Only with scan or signal webhooks. The sort direction for `order`.",
           "enum": [
             "asc",
             "desc"
@@ -1878,10 +1899,10 @@ export const tools: readonly ToolDef[] = [
         "kind": "body",
         "search": "body",
         "condition": "body",
-        "q": "body",
         "ticker": "body",
         "universe": "body",
         "min_relevance": "body",
+        "q": "body",
         "select": "body",
         "order": "body",
         "dir": "body",
@@ -1977,7 +1998,7 @@ export const tools: readonly ToolDef[] = [
         },
         "status": {
           "type": "string",
-          "description": "Filter by delivery status.",
+          "description": "Filter by delivery status (one or a comma list).",
           "enum": [
             "pending",
             "delivered",
@@ -1986,11 +2007,11 @@ export const tools: readonly ToolDef[] = [
         },
         "from": {
           "type": "string",
-          "description": "Only deliveries created at/after this moment — epoch seconds, epoch milliseconds (13+ digits) or an ISO datetime. Delivery history is retained for 90 days; deleting a webhook deletes its delivery history with it."
+          "description": "Only deliveries created at/after this moment — epoch seconds, epoch milliseconds (13+ digits) or an ISO datetime; a date-only value starts at the beginning of that UTC day. Delivery history is retained for 90 days; deleting a webhook deletes its delivery history with it."
         },
         "to": {
           "type": "string",
-          "description": "Only deliveries created at/before this moment — same value grammar as `from`. A date-only value means through the end of that UTC day. `from` after `to` is a 400."
+          "description": "Only deliveries created before this moment — same value grammar as `from`. A date-only value covers that whole UTC day. A timestamp is included until 2027-01-12 and exclusive from then, as everywhere else (Deprecations). `from` after `to` is a 400. See Time windows."
         },
         "limit": {
           "type": "integer",
@@ -2019,6 +2040,7 @@ export const tools: readonly ToolDef[] = [
       },
       "accepts": {
         "since": "query",
+        "until": "query",
         "id": "path"
       },
       "pathAliases": {
