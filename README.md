@@ -66,7 +66,7 @@ Add to `.vscode/mcp.json` in your workspace:
 
 ## Tools
 
-32 tools covering scans, signals, tickers (state, history, bars, coverage, ETF holdings), events and their kinds, news, universes and webhook subscriptions (scan, signal, ticker and events). Bars and History answer `data`: one symbol gives its rows, a comma list gives them keyed by symbol.
+33 tools covering scans, signals, tickers (state, history, bars, coverage, ETF holdings), events and their kinds, news, universes and webhook subscriptions (scan, signal, ticker, events and news). Bars and History answer `data`: one symbol gives its rows, a comma list gives them keyed by symbol.
 
 | Tool | Endpoint |
 | --- | --- |
@@ -89,6 +89,7 @@ Add to `.vscode/mcp.json` in your workspace:
 | `tickerbot_list_event_kinds` | `GET /v2/events/kinds` |
 | `tickerbot_subscribe_events` | `POST /v2/events/subscribe` |
 | `tickerbot_search_news` | `GET /v2/news` |
+| `tickerbot_subscribe_news` | `POST /v2/news/subscribe` |
 | `tickerbot_list_universes` | `GET /v2/universes` |
 | `tickerbot_create_universe` | `POST /v2/universes` |
 | `tickerbot_get_universe` | `GET /v2/universes/{id}` |

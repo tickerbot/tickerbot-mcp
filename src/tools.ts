@@ -1079,7 +1079,7 @@ export const tools: readonly ToolDef[] = [
         },
         "signal": {
           "type": "string",
-          "description": "Only with `kind=signal`. One signal or a comma list of up to 10: built-in yes/no signals or your custom signals. Required with `q` or `join=state`. See Signal firings."
+          "description": "Only with `kind=signal`. One signal or a comma list of up to 5: built-in yes/no signals or your custom signals. Required with `q` or `join=state`. See Signal firings."
         },
         "transition": {
           "type": "string",
@@ -1114,7 +1114,7 @@ export const tools: readonly ToolDef[] = [
         },
         "join": {
           "type": "string",
-          "description": "Set to `state` to use the ticker's signals in `q`, `select`, `group_by` and `having`, read as of each event's timestamp at the grain `grain` picks. On the daily grain an event on day D reads D-1's row, never D's close. A signal and a payload field with the same name (`price` on insider and signal events) resolve to the signal; spell the field `payload->>'price'`.",
+          "description": "Set to `state` to use the ticker's signals in `q`, `select`, `group_by` and `having`, read as of each event's timestamp at the grain `grain` picks. On the daily grain an event on day D reads D-1's row, never D's close. A signal and a payload field with the same name (`price` on insider and signal events, `cik` on filing) resolve to the signal; spell the field `payload->>'price'`.",
           "enum": [
             "state"
           ]
@@ -1204,7 +1204,7 @@ export const tools: readonly ToolDef[] = [
   },
   {
     "name": "tickerbot_subscribe_events",
-    "description": "Gets you an alert by webhook when new events of the kinds you choose land, filtered on the event and on the ticker's signals. Webhooks need a paid plan (Free has no webhook slots). One `q` covers the event's fields (with one kind, bare: `firm = 'Goldman Sachs'`) and the ticker's signals at fire time (`market_cap > 1e10`); an event field wins a name clash. Latency is the ingest cadence (analyst ≤1h, corporate kinds daily), not sub-minute.",
+    "description": "Gets you an alert by webhook when new events of the kinds you choose land, filtered on the event and on the ticker's signals. Webhooks need a paid plan (Free has no webhook slots). One `q` covers the event's fields (with one kind, bare: `firm = 'Goldman Sachs'`) and the ticker's signals at fire time (`market_cap > 1e10`); on a name clash (`price`, `cik`) the ticker signal wins; the event's own value is `payload->>'price'`. Latency is the ingest cadence (analyst ≤1h, corporate kinds daily), not sub-minute.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1223,7 +1223,7 @@ export const tools: readonly ToolDef[] = [
         },
         "q": {
           "type": "string",
-          "description": "The filter, as on Query events with `join=state`: the event's own fields (`id`, `ticker`, `ts`, `kind`, `payload`, and with one kind its payload fields by bare name) and the ticker's signals at fire time, in one WHERE clause. A payload field and a signal with the same name resolve to the field: `price` on insider, `cik` on filing. Custom signals are expanded and frozen at creation."
+          "description": "The filter, as on Query events with `join=state`: the event's own fields (`id`, `ticker`, `ts`, `kind`, `payload`, and with one kind its payload fields by bare name) and the ticker's signals at fire time, in one WHERE clause. A payload field and a signal with the same name resolve to the signal, as on Query events: `price` on insider, `cik` on filing. Spell the event's own value `payload->>'price'`. Custom signals are expanded and frozen at creation."
         },
         "ticker": {
           "type": "string",
@@ -1293,33 +1293,21 @@ export const tools: readonly ToolDef[] = [
   },
   {
     "name": "tickerbot_search_news",
-    "description": "Queries news with SQL for any ticker or a screen's matches: articles, or rollups when you group them. Filter to a ticker with the `ticker` param, or in `q` via the auto-unnest alias `tk = 'NVDA'`. A ticker filter matches every article that mentions it; add `min_relevance: 0.8` to keep only articles about it. `search` is full-text over title and summary. Rollups with group_by/having return `truncated: true` instead of paging.",
+    "description": "Queries news with SQL for any ticker or a screen's matches: articles with how each one treats every ticker it mentions, or rollups when you group them. `ticker` (one or a comma list) keeps articles that mention it; add `min_relevance: 0.8` to keep only articles about it. Each article carries `mentions`: per ticker, `relevance` and `sentiment_score`/`sentiment`. Naming `ticker`, `relevance`, `sentiment_score` or `sentiment` in `q`/`select`/`group_by` gives one row per article per mention: `q: ticker = 'NVDA' AND sentiment_score < -0.3` is articles negative about NVDA. `search` is full-text over title and summary. Rollups with group_by/having return `truncated: true` instead of paging.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "search": {
           "type": "string",
-          "description": "Full-text search over `title` + `summary` — websearch grammar: `nvidia earnings` (all words), `\"price target\"` (phrase), `chips OR semiconductors`, `-crypto` (negation). Max 200 chars. ANDs with `q` and the scoping params. Language-stemmed English."
-        },
-        "q": {
-          "type": "string",
-          "description": "WHERE clause over news articles. Max 4000 chars. Required UNLESS `search` or a scoping param (`ticker`/`tickers`/`universe`/`from`/`to`) is present — the simplest call needs no SQL. Queryable columns: `time_published`, `title`, `summary`, `source`, `source_domain`, `category`, `authors`, `topics`, `overall_sentiment_score`, `overall_sentiment_label`, `tickers`, `ticker_data`, `banner_image`, `url`, `id`, `created_at` — plus `tk`, the per-ticker UNNEST alias. Signals are not joinable here."
+          "description": "Full-text search over `title` + `summary` — websearch grammar: `nvidia earnings` (all words), `\"price target\"` (phrase), `chips OR semiconductors`, `-crypto` (negation). Max 200 chars. ANDs with `q` and the other filters. Language-stemmed English."
         },
         "ticker": {
           "type": "string",
-          "description": "Articles mentioning this symbol (ANDed with `q`)."
-        },
-        "tickers": {
-          "type": "string",
-          "description": "Comma list, up to 50 — articles mentioning ANY of them. Not combinable with `ticker` or `universe`."
+          "description": "One ticker or a comma list (up to 50): articles that mention any of them. Not combinable with `universe`. Per-mention rows still list every ticker an article mentions; put `ticker = 'NVDA'` in `q` for one ticker's rows."
         },
         "universe": {
           "type": "string",
-          "description": "Universe slug — articles mentioning any member. Not combinable with `ticker`/`tickers`."
-        },
-        "min_relevance": {
-          "type": "number",
-          "description": "With `ticker`/`tickers`/`universe`: keeps an article only when it is about one of those tickers, meaning that ticker's relevance score (`ticker_data.<TICKER>.rel`, 0 to 1) is at least this value. `0.8` drops passing mentions. Omitted: every article that mentions them. `400` without a ticker scope; inside `q`, filter `(ticker_data->'NVDA'->>'rel')::numeric >= 0.8` directly."
+          "description": "Universe slug: articles that mention any member. Not combinable with `ticker`."
         },
         "from": {
           "type": "string",
@@ -1329,21 +1317,29 @@ export const tools: readonly ToolDef[] = [
           "type": "string",
           "description": "Articles strictly before this instant — same strict ISO subset, matching `/v2/events`. A bare `YYYY-MM-DD` means through the end of that day (the ET calendar day), so `from` and `to` on the same date return that day."
         },
-        "group_by": {
+        "min_relevance": {
+          "type": "number",
+          "description": "With `ticker` or `universe`: keeps an article only when it is about one of those tickers, meaning that ticker's `relevance` (0 to 1) is at least this value. `0.8` drops passing mentions. Omitted: every article that mentions them. `400` without a ticker scope; in `q`, filter the mention itself: `ticker = 'NVDA' AND relevance >= 0.8`."
+        },
+        "q": {
           "type": "string",
-          "description": "AGGREGATE MODE: comma-separated group keys, 1-6 (max 1000 chars). Switches the response to rollups. Use `tk` to roll up per ticker without writing the UNNEST. Name a key with `AS` to choose its JSON key; an un-named expression is named for you rather than returned as `?column?`."
+          "description": "WHERE clause over news articles. Max 4000 chars. Required unless `search`, `ticker`, `universe`, `from` or `to` is present. Takes every article field under Returns except `mentions`, plus the per-mention fields `ticker`, `relevance`, `sentiment_score` and `sentiment` (one article per mention). Signals are not joinable here."
         },
         "select": {
           "type": "string",
-          "description": "Columns/expressions to return (max 2000 chars). Defaults to article columns (no `group_by`) or `<group_by cols>, COUNT(*) AS volume` (with `group_by`)."
+          "description": "Fields or expressions to return (max 2000 chars). Defaults to the article row (no `group_by`) or `<group_by keys>, COUNT(*) AS volume` (with `group_by`). `mentions` is selectable on its own."
+        },
+        "group_by": {
+          "type": "string",
+          "description": "Comma-separated group keys, 1-6 (max 1000 chars); the response becomes rollups. `ticker` rolls up per ticker mentioned. Name a key with `AS` to choose its JSON key; an un-named expression is named for you rather than returned as `?column?`."
         },
         "having": {
           "type": "string",
-          "description": "HAVING clause on the aggregate (max 1000 chars). Requires `group_by`."
+          "description": "Only with `group_by`. HAVING clause on the rollup (max 1000 chars)."
         },
         "order": {
           "type": "string",
-          "description": "Sort — a bare column name or SELECT alias only (put expressions in `select` and order by their alias). Defaults to `time_published` (articles) or `volume` (rollups; with your own `select` that has no `volume` column, its last column's alias)."
+          "description": "Sort — a bare field name or SELECT alias only (put expressions in `select` and order by their alias). Defaults to `time_published` (articles) or `volume` (rollups; with your own `select` that has no `volume` column, its last column's alias)."
         },
         "dir": {
           "type": "string",
@@ -1370,15 +1366,14 @@ export const tools: readonly ToolDef[] = [
       "path": "/v2/news",
       "paramLocation": {
         "search": "query",
-        "q": "query",
         "ticker": "query",
-        "tickers": "query",
         "universe": "query",
-        "min_relevance": "query",
         "from": "query",
         "to": "query",
-        "group_by": "query",
+        "min_relevance": "query",
+        "q": "query",
         "select": "query",
+        "group_by": "query",
         "having": "query",
         "order": "query",
         "dir": "query",
@@ -1386,8 +1381,89 @@ export const tools: readonly ToolDef[] = [
         "cursor": "query"
       },
       "accepts": {
+        "tickers": "query",
         "since": "query",
         "until": "query"
+      }
+    }
+  },
+  {
+    "name": "tickerbot_subscribe_news",
+    "description": "Gets you an alert by webhook when a new article matches your search, tickers or SQL filter, with how it treats each ticker it mentions. Webhooks need a paid plan (Free has no webhook slots). Takes Query news's filters (search, ticker, universe, min_relevance, q); one of search/ticker/universe/q is required, since the whole market is about 6,000 articles a weekday. Fires as new matching articles land; each article fires once. Each delivery is `event: \"news.fired\"` with `articles`, each the Query news row (or `select`) plus `mentions`.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "search": {
+          "type": "string",
+          "description": "Full-text search over `title` + `summary`, as on Query news."
+        },
+        "ticker": {
+          "type": "string",
+          "description": "One ticker or a comma list (up to 50): articles that mention any of them. Not combinable with `universe`."
+        },
+        "universe": {
+          "type": "string",
+          "description": "Universe slug (`top_10`, `top_100` or one of yours): articles that mention any member."
+        },
+        "min_relevance": {
+          "type": "number",
+          "description": "With `ticker` or `universe`: only articles about one of those tickers (its `relevance` at least this value, 0 to 1)."
+        },
+        "q": {
+          "type": "string",
+          "description": "The filter, as on Query news: article fields and the per-mention fields `ticker`, `relevance`, `sentiment_score` and `sentiment`. An article fires once when any of its mentions matches."
+        },
+        "select": {
+          "type": "string",
+          "description": "The article fields each delivered article carries, besides `id` and `mentions` (always sent). Names only. Omitted: the Query news default row."
+        },
+        "channel": {
+          "type": "string",
+          "description": "Delivery channel. Inferred when omitted: `webhook` if `target_url` is set, `discord` if `discord_url` is set, `mobile_push` if `device_id` is set, else `in_app`.",
+          "enum": [
+            "webhook",
+            "discord",
+            "in_app",
+            "mobile_push"
+          ]
+        },
+        "target_url": {
+          "type": "string",
+          "description": "Only with `channel=webhook`. HTTPS delivery URL."
+        },
+        "discord_url": {
+          "type": "string",
+          "description": "Only with `channel=discord`. Discord incoming-webhook URL. Stored as a posting credential: the create response echoes it back under `channel_config`, but every later read (list, get, deliveries) strips it and sets `channel_config_present: true` instead."
+        },
+        "device_id": {
+          "type": "string",
+          "description": "Only with `channel=mobile_push`. Device to notify, from `POST /v2/devices/register`. Unknown ids are a 404 `device_not_found`."
+        },
+        "name": {
+          "type": "string",
+          "description": "Display name. Defaults to `news: <scope> · <search or q>`."
+        }
+      }
+    },
+    "endpoint": {
+      "method": "POST",
+      "path": "/v2/news/subscribe",
+      "paramLocation": {
+        "search": "body",
+        "ticker": "body",
+        "universe": "body",
+        "min_relevance": "body",
+        "q": "body",
+        "select": "body",
+        "channel": "body",
+        "target_url": "body",
+        "discord_url": "body",
+        "device_id": "body",
+        "name": "body"
+      },
+      "accepts": {
+        "tickers": "body",
+        "universe_id": "body"
       }
     }
   },
