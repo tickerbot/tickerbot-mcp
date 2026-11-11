@@ -1,10 +1,10 @@
-// Dispatches an MCP tool call to the Tickerbot REST API.
+// Dispatches an MCP tool call to the Tickerbot REST API, against the
+// bundled snapshot (src/tools.ts).
 //
-// Same handler is used by both transports:
-//   - the stdio binary (src/index.ts) for local desktop/IDE clients
-//   - the HTTP endpoint on main_service for remote chat clients
-//
-// One source of truth for path substitution, query/body assembly, auth.
+// Fallback only (TB-740): the stdio bridge (src/index.ts) forwards calls to
+// the hosted MCP server and uses this runner only while that server cannot
+// be reached, or when no key is set. Mirrors main_service/mcp/handler.js,
+// which runs every call the hosted server answers.
 
 import { findTool as bakedFindTool, type ToolDef } from './tools.js'
 
@@ -15,9 +15,7 @@ export interface RunToolOptions {
   baseUrl?: string
   /** Optional user-agent appended to identify the MCP server. */
   userAgent?: string
-  /** Override the tool lookup. Used when index.ts has fetched the live
-   *  catalog from /mcp/tools — we dispatch against the server's
-   *  current tool definitions, not the baked snapshot. */
+  /** Override the tool lookup (defaults to the bundled snapshot). */
   findTool?: (name: string) => ToolDef | undefined
 }
 
