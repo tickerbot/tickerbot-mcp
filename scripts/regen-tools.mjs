@@ -4,6 +4,7 @@
 // monorepo checkout next door (default) or from the live server.
 //
 //   node scripts/regen-tools.mjs                    # from ../tickerbot (default)
+//   node scripts/regen-tools.mjs --repo=<path>      # from another monorepo checkout (a worktree)
 //   node scripts/regen-tools.mjs --live             # from https://api.tickerbot.io/mcp/tools
 //
 // Staleness in the snapshot only matters during a Tickerbot outage — online
@@ -23,7 +24,9 @@ if (process.argv.includes('--live')) {
   tools = (await res.json()).tools
 } else {
   const require = createRequire(import.meta.url)
-  tools = require(resolve(here, '../../tickerbot/main_service/mcp/tools.js')).tools
+  const repoArg = process.argv.find((a) => a.startsWith('--repo='))
+  const repo = repoArg ? resolve(repoArg.slice('--repo='.length)) : resolve(here, '../../tickerbot')
+  tools = require(resolve(repo, 'main_service/mcp/tools.js')).tools
 }
 
 const HEADER = `// OFFLINE FALLBACK tool registry for the Tickerbot MCP server.
@@ -57,6 +60,12 @@ export interface ToolDef {
     path: string
     /** Where each declared input param goes. */
     paramLocation: Record<string, ParamLocation>
+    /** Older names the route still accepts (TB-570): not in the
+     *  inputSchema, but sent where the route reads them if passed. */
+    accepts?: Record<string, ParamLocation>
+    /** Query values every call sends (TB-570 step 3: \`api_version\`, so
+     *  Bars and History answer the \`data\` shape the descriptions name). */
+    fixedQuery?: Record<string, string>
   }
 }
 
@@ -87,7 +96,11 @@ const snapshot = tools.map((t) => ({
   name: t.name,
   description: t.description,
   inputSchema: t.inputSchema,
-  endpoint: { method: t.endpoint.method, path: t.endpoint.path, paramLocation: t.endpoint.paramLocation },
+  endpoint: {
+    method: t.endpoint.method, path: t.endpoint.path, paramLocation: t.endpoint.paramLocation,
+    ...(t.endpoint.accepts ? { accepts: t.endpoint.accepts } : {}),
+    ...(t.endpoint.fixedQuery ? { fixedQuery: t.endpoint.fixedQuery } : {}),
+  },
 }))
 writeFileSync(out, HEADER + JSON.stringify(snapshot, null, 2) + FOOTER)
 console.log(`wrote ${out}: ${tools.length} tools`)

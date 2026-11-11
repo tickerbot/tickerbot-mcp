@@ -152,7 +152,10 @@ function buildRequest(
 
   for (const [key, value] of Object.entries(args)) {
     if (value === undefined || value === null || value === '') continue
-    const where = tool.endpoint.paramLocation[key]
+    // Declared params first; then the older names the route still accepts
+    // (endpoint.accepts, TB-570), sent where the route reads them. Anything
+    // else is ignored. Mirrors main_service/mcp/handler.js.
+    const where = tool.endpoint.paramLocation[key] ?? tool.endpoint.accepts?.[key]
     if (!where) continue // unknown param, ignore
 
     if (where === 'path') {
@@ -170,6 +173,11 @@ function buildRequest(
       bodyHasContent = true
     }
   }
+
+  // Fixed query values the tool always sends (endpoint.fixedQuery, TB-570
+  // step 3: `api_version=2027-01-12` on Bars and History, so they answer
+  // `data` — one symbol: its rows; a comma list: keyed by symbol).
+  for (const [k, v] of Object.entries(tool.endpoint.fixedQuery ?? {})) query.set(k, String(v))
 
   // Verify no path placeholders left unfilled
   const unfilled = path.match(/\{([a-zA-Z_]+)\}/)
