@@ -69,7 +69,7 @@ async function main() {
   const hostedUrl = `${baseUrl}/mcp`
 
   const hosted = apiKey
-    ? new HostedClient({ url: hostedUrl, apiKey, userAgent: USER_AGENT, clientVersion: SERVER_VERSION })
+    ? new HostedClient({ url: hostedUrl, apiKey, userAgent: USER_AGENT, clientVersion: SERVER_VERSION, clientLabel: `${SERVER_NAME}/${SERVER_VERSION}` })
     : null
 
   // 'hosted': tools and calls go to {baseUrl}/mcp. 'snapshot': the bundled

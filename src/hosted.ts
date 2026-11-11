@@ -51,6 +51,8 @@ export interface HostedClientOptions {
   apiKey: string
   userAgent: string
   clientVersion: string
+  /** Sent as X-Tickerbot-MCP-Client: `@tickerbot/mcp-server/<version>`. */
+  clientLabel: string
 }
 
 const CLIENT_PROTOCOL_VERSION = '2025-06-18'
@@ -119,6 +121,10 @@ export class HostedClient {
       'Content-Type': 'application/json',
       Accept: 'application/json, text/event-stream',
       'User-Agent': this.opts.userAgent,
+      // Names this client on every request (TB-740). The hosted server
+      // forwards it on its REST calls so the call log can tell npm-bridge
+      // usage from other clients; it must match `@tickerbot/mcp-server/<semver>`.
+      'X-Tickerbot-MCP-Client': this.opts.clientLabel,
     }
     if (this.sessionId) headers['mcp-session-id'] = this.sessionId
     if (this.protocolVersion) headers['mcp-protocol-version'] = this.protocolVersion

@@ -2,7 +2,7 @@
 
 Model Context Protocol server for [Tickerbot](https://tickerbot.io) — the stock market, in SQL. Install in Claude, Cursor, VS Code Copilot, and other MCP-compatible clients to scan ~14,500 US-listed equities plus a curated set of rates, FX and crypto series, replay any day, or subscribe a query — across 421+ signal columns.
 
-This package is a thin stdio bridge to the hosted Tickerbot MCP server at `https://api.tickerbot.io/mcp`. On start it reads the tool list from that server with your key, and it forwards every tool call there and returns the result unchanged. A tool added or changed on Tickerbot reaches you the next time your client starts the server, with no package update.
+This package is a thin stdio bridge to the hosted Tickerbot MCP server at `https://api.tickerbot.io/mcp`. On start it reads the tool list from that server with your key, and it forwards every tool call there and returns the result unchanged. A tool added or changed on Tickerbot reaches you the next time your client starts the server, with no package update. Each request to the hosted server carries an `X-Tickerbot-MCP-Client: @tickerbot/mcp-server/<version>` header, so Tickerbot's call log can tell this package's traffic from other MCP clients; it is a label only.
 
 ## Install
 

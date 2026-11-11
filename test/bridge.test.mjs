@@ -38,7 +38,7 @@ function startStub(mode) {
     req.on('end', () => {
       if (req.url === '/mcp' && req.method === 'POST') {
         const msg = JSON.parse(raw)
-        seen.mcp.push({ auth: req.headers.authorization, accept: req.headers.accept, msg })
+        seen.mcp.push({ auth: req.headers.authorization, accept: req.headers.accept, client: req.headers['x-tickerbot-mcp-client'], msg })
         if (mode === 'down') return res.writeHead(503).end('down')
         if (!req.headers.authorization) return res.writeHead(401, { 'Content-Type': 'application/json' }).end('{"error":"unauthorized"}')
         if (msg.id === undefined) return res.writeHead(202).end()
@@ -102,6 +102,10 @@ test('tools come from the hosted server', async () => {
     assert.match(init.accept, /application\/json/)
     assert.match(init.accept, /text\/event-stream/)
     assert.ok(stub.seen.mcp.some((s) => s.msg.method === 'notifications/initialized'))
+    // Every request names the client, so the call log can tell the bridge
+    // from other hosted-MCP clients (TB-740).
+    const { version } = JSON.parse(await import('node:fs').then((fs) => fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')))
+    for (const s of stub.seen.mcp) assert.equal(s.client, `@tickerbot/mcp-server/${version}`, s.msg.method)
     assert.doesNotMatch(stderr(), /WARNING/)
     await client.close()
   } finally {
@@ -120,6 +124,7 @@ test('tools/call is forwarded and its result returned unchanged', async () => {
     const call = stub.seen.mcp.find((s) => s.msg.method === 'tools/call')
     assert.equal(call.auth, `Bearer ${KEY}`)
     assert.deepEqual(call.msg.params, { name: 'tickerbot_brand_new_tool', arguments: { ticker: 'AAPL' } })
+    assert.match(call.client, /^@tickerbot\/mcp-server\/\d+\.\d+\.\d+$/)
     assert.equal(stub.seen.rest.length, 0, 'no REST call from the bridge itself')
     await client.close()
   } finally {
