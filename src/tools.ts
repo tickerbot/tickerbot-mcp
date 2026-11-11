@@ -32,6 +32,9 @@ export interface ToolDef {
     /** Older names the route still accepts (TB-570): not in the
      *  inputSchema, but sent where the route reads them if passed. */
     accepts?: Record<string, ParamLocation>
+    /** An older path-param name -> the slot the docs name it by (TB-570
+     *  step 3: `id` fills {universe} / {webhook}, `delivery_id` {delivery}). */
+    pathAliases?: Record<string, string>
     /** Query values every call sends (TB-570 step 3: `api_version`, so
      *  Bars and History answer the `data` shape the descriptions name). */
     fixedQuery?: Record<string, string>
@@ -1012,6 +1015,12 @@ export const tools: readonly ToolDef[] = [
       "path": "/v2/tickers/{ticker}/coverage",
       "paramLocation": {
         "ticker": "path"
+      },
+      "accepts": {
+        "symbol": "path"
+      },
+      "pathAliases": {
+        "symbol": "ticker"
       }
     }
   },
@@ -1041,6 +1050,12 @@ export const tools: readonly ToolDef[] = [
       "paramLocation": {
         "ticker": "path",
         "limit": "query"
+      },
+      "accepts": {
+        "symbol": "path"
+      },
+      "pathAliases": {
+        "symbol": "ticker"
       }
     }
   },
@@ -1473,19 +1488,21 @@ export const tools: readonly ToolDef[] = [
     "inputSchema": {
       "type": "object",
       "properties": {
-        "owner": {
+        "kind": {
           "type": "string",
-          "description": "Which universes to list: `me` (your own), `system` (built-ins) or `all` (both).",
+          "description": "Which universes to list: `builtin` (`top_10`, `top_100`), `custom` (your own) or both as a comma list. Leave it out for your own; from the cut-off on Deprecations it lists both.",
           "enum": [
-            "me",
-            "system",
-            "all"
-          ],
-          "default": "me"
+            "builtin",
+            "custom"
+          ]
+        },
+        "search": {
+          "type": "string",
+          "description": "Only universes whose id, name or description contains this text (case-insensitive)."
         },
         "limit": {
           "type": "integer",
-          "description": "Page size (applies to your own). Max 100.",
+          "description": "Page size. Max 100.",
           "default": 50
         },
         "cursor": {
@@ -1498,9 +1515,13 @@ export const tools: readonly ToolDef[] = [
       "method": "GET",
       "path": "/v2/universes",
       "paramLocation": {
-        "owner": "query",
+        "kind": "query",
+        "search": "query",
         "limit": "query",
         "cursor": "query"
+      },
+      "accepts": {
+        "owner": "query"
       }
     }
   },
@@ -1552,20 +1573,26 @@ export const tools: readonly ToolDef[] = [
     "inputSchema": {
       "type": "object",
       "properties": {
-        "id": {
+        "universe": {
           "type": "string",
-          "description": "Universe slug."
+          "description": "Universe slug: a built-in (`top_10`, `top_100`) or one of yours."
         }
       },
       "required": [
-        "id"
+        "universe"
       ]
     },
     "endpoint": {
       "method": "GET",
-      "path": "/v2/universes/{id}",
+      "path": "/v2/universes/{universe}",
       "paramLocation": {
+        "universe": "path"
+      },
+      "accepts": {
         "id": "path"
+      },
+      "pathAliases": {
+        "id": "universe"
       }
     }
   },
@@ -1575,7 +1602,7 @@ export const tools: readonly ToolDef[] = [
     "inputSchema": {
       "type": "object",
       "properties": {
-        "id": {
+        "universe": {
           "type": "string",
           "description": "Universe slug."
         },
@@ -1610,19 +1637,25 @@ export const tools: readonly ToolDef[] = [
         }
       },
       "required": [
-        "id"
+        "universe"
       ]
     },
     "endpoint": {
       "method": "PATCH",
-      "path": "/v2/universes/{id}",
+      "path": "/v2/universes/{universe}",
       "paramLocation": {
-        "id": "path",
+        "universe": "path",
         "tickers": "body",
         "add": "body",
         "remove": "body",
         "name": "body",
         "description": "body"
+      },
+      "accepts": {
+        "id": "path"
+      },
+      "pathAliases": {
+        "id": "universe"
       }
     }
   },
@@ -1632,7 +1665,7 @@ export const tools: readonly ToolDef[] = [
     "inputSchema": {
       "type": "object",
       "properties": {
-        "id": {
+        "universe": {
           "type": "string",
           "description": "Universe slug."
         },
@@ -1643,15 +1676,21 @@ export const tools: readonly ToolDef[] = [
         }
       },
       "required": [
-        "id"
+        "universe"
       ]
     },
     "endpoint": {
       "method": "DELETE",
-      "path": "/v2/universes/{id}",
+      "path": "/v2/universes/{universe}",
       "paramLocation": {
-        "id": "path",
+        "universe": "path",
         "force": "query"
+      },
+      "accepts": {
+        "id": "path"
+      },
+      "pathAliases": {
+        "id": "universe"
       }
     }
   },
@@ -1663,7 +1702,7 @@ export const tools: readonly ToolDef[] = [
       "properties": {
         "status": {
           "type": "string",
-          "description": "Filter by status: `active` or `disabled` — the only two states a webhook has (`disabled` covers a user pause, the automatic disable after 72 hours with no successful delivery and the automatic disable of a trigger that can no longer run; `disabled_reason` on each record says which: `user_disabled`, `delivery_failure`, `evaluation_failure`, `plan_downgrade` or `subscription_canceled`). Omit for all.",
+          "description": "Filter by status: `active`, `disabled` or both as a comma list — the only two states a webhook has (`disabled` covers a user pause, the automatic disable after 72 hours with no successful delivery and the automatic disable of a trigger that can no longer run; `disabled_reason` on each record says which: `user_disabled`, `delivery_failure`, `evaluation_failure`, `plan_downgrade` or `subscription_canceled`). Omit for all.",
           "enum": [
             "active",
             "disabled"
@@ -1696,40 +1735,117 @@ export const tools: readonly ToolDef[] = [
     "inputSchema": {
       "type": "object",
       "properties": {
-        "id": {
+        "webhook": {
           "type": "string",
-          "description": "Webhook id returned by a subscribe endpoint (`POST /v2/tickers/{T}/subscribe`, etc.)."
+          "description": "Webhook id, from a subscribe or from List webhooks."
         }
       },
       "required": [
-        "id"
+        "webhook"
       ]
     },
     "endpoint": {
       "method": "GET",
-      "path": "/v2/webhooks/{id}",
+      "path": "/v2/webhooks/{webhook}",
       "paramLocation": {
+        "webhook": "path"
+      },
+      "accepts": {
         "id": "path"
+      },
+      "pathAliases": {
+        "id": "webhook"
       }
     }
   },
   {
     "name": "tickerbot_update_webhook",
-    "description": "Edits a webhook in place; send only the fields you want to change. The trigger and channel are immutable — delete and re-create to change what fires or where it delivers. Unknown fields are a 400.",
+    "description": "Edits a webhook in place; send only the fields you want to change. Send only what changes. The trigger takes the filters of the subscribe that made the webhook (subscription_origin.type: scan q/universe/select/order/dir; ticker q/select; signal condition/universe/select; event kind/ticker/universe/q/select; news search/ticker/universe/min_relevance/q/select), validated like a new subscribe; a changed trigger fires once for every current match. enabled=true turns a disabled webhook back on. Unknown fields are a 400.",
     "inputSchema": {
       "type": "object",
       "properties": {
-        "id": {
+        "webhook": {
           "type": "string",
           "description": "Webhook id."
         },
+        "kind": {
+          "type": "string",
+          "description": "Event webhooks: the kinds to fire on, as on Subscribe to events.",
+          "enum": [
+            "dividend",
+            "split",
+            "insider",
+            "analyst",
+            "earnings",
+            "filing",
+            "estimate_revision"
+          ]
+        },
+        "search": {
+          "type": "string",
+          "description": "News webhooks: the full-text search, as on Subscribe to news."
+        },
+        "condition": {
+          "type": "string",
+          "description": "Signal webhooks: the bound, in Get a signal's grammar (`<30`)."
+        },
+        "q": {
+          "type": "string",
+          "description": "Scan, ticker, event and news webhooks: the filter, in the grammar of the subscribe that made the webhook. On an event webhook it replaces the whole filter."
+        },
+        "ticker": {
+          "type": "string",
+          "description": "Event and news webhooks: the symbols, one or a comma list. Replaces a `universe` scope."
+        },
+        "universe": {
+          "type": "string",
+          "description": "Scan, signal, event and news webhooks: the universe to scope to; `null` for the whole market. On event and news webhooks it replaces a `ticker` scope."
+        },
+        "min_relevance": {
+          "type": "number",
+          "description": "News webhooks: the least relevance (0–1) a scoped ticker needs."
+        },
+        "select": {
+          "type": "string",
+          "description": "What each delivery carries, as on the subscribe that made the webhook; `null` for the default."
+        },
+        "order": {
+          "type": "string",
+          "description": "Scan webhooks: the signal each delivery's match lists are sorted by."
+        },
+        "dir": {
+          "type": "string",
+          "description": "Scan webhooks: the sort direction for `order`.",
+          "enum": [
+            "asc",
+            "desc"
+          ]
+        },
+        "channel": {
+          "type": "string",
+          "description": "Moves the webhook to another channel: `webhook` (with `target_url`), `discord` (with `discord_url`), `in_app` or `mobile_push` (with `device_id`). Inferred from `discord_url` or `device_id` when you send one of those alone.",
+          "enum": [
+            "webhook",
+            "discord",
+            "in_app",
+            "mobile_push"
+          ]
+        },
         "target_url": {
           "type": "string",
-          "description": "New https:// delivery URL (webhook channel only — a Discord/mobile subscription 400s here). `null` or empty switches to in-app delivery; `status` is untouched — a disabled webhook stays disabled until `POST /v2/webhooks/{id}/enable` (the only path that re-checks your account's webhook cap)."
+          "description": "New https:// delivery URL. Alone, it moves a webhook between HTTPS (`target_url`) and in-app delivery (`null` or empty); a Discord or mobile-push webhook sends `channel: \"webhook\"` with it."
+        },
+        "discord_url": {
+          "type": "string",
+          "description": "Only with `channel=discord`. Discord incoming-webhook URL. Never returned after this call: reads show `channel_config_present: true`."
+        },
+        "device_id": {
+          "type": "string",
+          "description": "Only with `channel=mobile_push`. Device to notify, from `POST /v2/devices/register`."
         },
         "cadence": {
           "type": "string",
-          "description": "Evaluation cadence; never gated. Event triggers deliver on ingest, so only `realtime` is accepted on them (400 otherwise).",
+          "description": "Evaluation cadence. Event and news webhooks deliver as they land, so only `realtime` is accepted on them.",
           "enum": [
             "realtime",
             "hourly",
@@ -1742,22 +1858,44 @@ export const tools: readonly ToolDef[] = [
         },
         "enabled": {
           "type": "boolean",
-          "description": "`false` disables the webhook (status → `disabled`). `true` is a no-op unless disabled, in which case use `POST /v2/webhooks/{id}/enable` instead."
+          "description": "`false` turns the webhook off. `true` turns a disabled webhook back on: your webhook limit is checked, the trigger is checked again, and it starts clean, firing once for every current match."
         }
       },
       "required": [
-        "id"
+        "webhook"
       ]
     },
     "endpoint": {
       "method": "PATCH",
-      "path": "/v2/webhooks/{id}",
+      "path": "/v2/webhooks/{webhook}",
       "paramLocation": {
-        "id": "path",
+        "webhook": "path",
+        "kind": "body",
+        "search": "body",
+        "condition": "body",
+        "q": "body",
+        "ticker": "body",
+        "universe": "body",
+        "min_relevance": "body",
+        "select": "body",
+        "order": "body",
+        "dir": "body",
+        "channel": "body",
         "target_url": "body",
+        "discord_url": "body",
+        "device_id": "body",
         "cadence": "body",
         "name": "body",
         "enabled": "body"
+      },
+      "accepts": {
+        "kinds": "body",
+        "tickers": "body",
+        "universe_id": "body",
+        "id": "path"
+      },
+      "pathAliases": {
+        "id": "webhook"
       }
     }
   },
@@ -1767,20 +1905,26 @@ export const tools: readonly ToolDef[] = [
     "inputSchema": {
       "type": "object",
       "properties": {
-        "id": {
+        "webhook": {
           "type": "string",
           "description": "Webhook id."
         }
       },
       "required": [
-        "id"
+        "webhook"
       ]
     },
     "endpoint": {
       "method": "DELETE",
-      "path": "/v2/webhooks/{id}",
+      "path": "/v2/webhooks/{webhook}",
       "paramLocation": {
+        "webhook": "path"
+      },
+      "accepts": {
         "id": "path"
+      },
+      "pathAliases": {
+        "id": "webhook"
       }
     }
   },
@@ -1790,7 +1934,7 @@ export const tools: readonly ToolDef[] = [
     "inputSchema": {
       "type": "object",
       "properties": {
-        "id": {
+        "webhook": {
           "type": "string",
           "description": "Webhook id."
         },
@@ -1822,14 +1966,14 @@ export const tools: readonly ToolDef[] = [
         }
       },
       "required": [
-        "id"
+        "webhook"
       ]
     },
     "endpoint": {
       "method": "GET",
-      "path": "/v2/webhooks/{id}/deliveries",
+      "path": "/v2/webhooks/{webhook}/deliveries",
       "paramLocation": {
-        "id": "path",
+        "webhook": "path",
         "status": "query",
         "from": "query",
         "to": "query",
@@ -1837,7 +1981,11 @@ export const tools: readonly ToolDef[] = [
         "cursor": "query"
       },
       "accepts": {
-        "since": "query"
+        "since": "query",
+        "id": "path"
+      },
+      "pathAliases": {
+        "id": "webhook"
       }
     }
   },
@@ -1847,49 +1995,34 @@ export const tools: readonly ToolDef[] = [
     "inputSchema": {
       "type": "object",
       "properties": {
-        "id": {
+        "webhook": {
           "type": "string",
           "description": "Webhook id."
         },
-        "delivery_id": {
+        "delivery": {
           "type": "string",
-          "description": "The delivery to resend, from `GET /v2/webhooks/{id}/deliveries`."
+          "description": "The delivery to resend, from `GET /v2/webhooks/{webhook}/deliveries`."
         }
       },
       "required": [
-        "id",
-        "delivery_id"
+        "webhook",
+        "delivery"
       ]
     },
     "endpoint": {
       "method": "POST",
-      "path": "/v2/webhooks/{id}/deliveries/{delivery_id}/redeliver",
+      "path": "/v2/webhooks/{webhook}/deliveries/{delivery}/redeliver",
       "paramLocation": {
+        "webhook": "path",
+        "delivery": "path"
+      },
+      "accepts": {
         "id": "path",
         "delivery_id": "path"
-      }
-    }
-  },
-  {
-    "name": "tickerbot_enable_webhook",
-    "description": "Re-enables a disabled webhook and starts it clean. Clears match-state, so the next eval treats every currently-matching ticker as new.",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "id": {
-          "type": "string",
-          "description": "Webhook id."
-        }
       },
-      "required": [
-        "id"
-      ]
-    },
-    "endpoint": {
-      "method": "POST",
-      "path": "/v2/webhooks/{id}/enable",
-      "paramLocation": {
-        "id": "path"
+      "pathAliases": {
+        "id": "webhook",
+        "delivery_id": "delivery"
       }
     }
   },
@@ -1899,20 +2032,26 @@ export const tools: readonly ToolDef[] = [
     "inputSchema": {
       "type": "object",
       "properties": {
-        "id": {
+        "webhook": {
           "type": "string",
           "description": "Webhook id."
         }
       },
       "required": [
-        "id"
+        "webhook"
       ]
     },
     "endpoint": {
       "method": "POST",
-      "path": "/v2/webhooks/{id}/test",
+      "path": "/v2/webhooks/{webhook}/test",
       "paramLocation": {
+        "webhook": "path"
+      },
+      "accepts": {
         "id": "path"
+      },
+      "pathAliases": {
+        "id": "webhook"
       }
     }
   }

@@ -159,7 +159,9 @@ function buildRequest(
     if (!where) continue // unknown param, ignore
 
     if (where === 'path') {
-      const token = `{${key}}`
+      // An older path-param name fills the slot the docs name it by
+      // (endpoint.pathAliases, TB-570 step 3: `id` → {universe}).
+      const token = `{${tool.endpoint.pathAliases?.[key] ?? key}}`
       if (!path.includes(token)) {
         throw new ToolError(
           `Tool ${tool.name} declares path param "${key}" but path template "${tool.endpoint.path}" has no {${key}} placeholder.`,

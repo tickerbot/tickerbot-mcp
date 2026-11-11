@@ -63,6 +63,9 @@ export interface ToolDef {
     /** Older names the route still accepts (TB-570): not in the
      *  inputSchema, but sent where the route reads them if passed. */
     accepts?: Record<string, ParamLocation>
+    /** An older path-param name -> the slot the docs name it by (TB-570
+     *  step 3: \`id\` fills {universe} / {webhook}, \`delivery_id\` {delivery}). */
+    pathAliases?: Record<string, string>
     /** Query values every call sends (TB-570 step 3: \`api_version\`, so
      *  Bars and History answer the \`data\` shape the descriptions name). */
     fixedQuery?: Record<string, string>
@@ -99,6 +102,7 @@ const snapshot = tools.map((t) => ({
   endpoint: {
     method: t.endpoint.method, path: t.endpoint.path, paramLocation: t.endpoint.paramLocation,
     ...(t.endpoint.accepts ? { accepts: t.endpoint.accepts } : {}),
+    ...(t.endpoint.pathAliases ? { pathAliases: t.endpoint.pathAliases } : {}),
     ...(t.endpoint.fixedQuery ? { fixedQuery: t.endpoint.fixedQuery } : {}),
   },
 }))
