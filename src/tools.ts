@@ -38,6 +38,9 @@ export interface ToolDef {
     /** Query values every call sends (TB-570 step 3: `api_version`, so
      *  Bars and History answer the `data` shape the descriptions name). */
     fixedQuery?: Record<string, string>
+    /** Body fields every call sends (a deprecated tool built from its
+     *  successor: tickerbot_enable_webhook is PATCH `enabled: true`). */
+    fixedBody?: Record<string, unknown>
   }
 }
 
@@ -616,7 +619,9 @@ export const tools: readonly ToolDef[] = [
         "name": "body"
       },
       "accepts": {
-        "universe_id": "body"
+        "universe_id": "body",
+        "columns": "body",
+        "fields": "body"
       }
     }
   },
@@ -667,7 +672,7 @@ export const tools: readonly ToolDef[] = [
         },
         "limit": {
           "type": "integer",
-          "description": "Page size. Max 1000.",
+          "description": "Page size. Max 1000 until 2027-01-12, then 100 (a larger value is clamped to the max, not an error; see Deprecations).",
           "default": 50
         },
         "cursor": {
@@ -1036,7 +1041,7 @@ export const tools: readonly ToolDef[] = [
         },
         "limit": {
           "type": "integer",
-          "description": "Max holdings returned, per ETF. Max 5000. When the cap cuts the list, the response sets `truncated: true` and `total` (the ETF's full holding count) — raise `limit` to at least `total` to get the full set, possible whenever `total` is within the 5000 cap (an over-cap `limit` is clamped to 5000, not an error). No `truncated` in the response means the list is complete.",
+          "description": "Max holdings returned, per ETF. Max 5000 until 2027-01-12, then 1000 (see Deprecations). When the cap cuts the list, the response sets `truncated: true` and `total` (the ETF's full holding count) — raise `limit` to at least `total` to get the full set, possible whenever `total` is within the cap (an over-cap `limit` is clamped to the max, not an error). No `truncated` in the response means the list is complete.",
           "default": 500
         }
       },
@@ -1080,10 +1085,6 @@ export const tools: readonly ToolDef[] = [
             "estimate_revision"
           ]
         },
-        "q": {
-          "type": "string",
-          "description": "SQL WHERE over `id`, `ticker`, `ts`, `kind` and `payload` (plus the ticker's signals with `join=state`). With one `kind`, its payload fields are typed columns by bare name: `amount > 1`, `firm ILIKE 'Morgan Stanley'`, `relevance >= 0.8` on news (List event kinds lists them); with several kinds, use `payload->>'…'`. Max 4000 chars. ANDs with the other filters."
-        },
         "ticker": {
           "type": "string",
           "description": "One ticker or a comma list (up to 50). Not combinable with `universe`. A crypto, FX or rate symbol (`X:BTCUSD`) takes `kind=signal`; every other kind is equities-only and returns `400` naming the symbol's asset class."
@@ -1091,6 +1092,14 @@ export const tools: readonly ToolDef[] = [
         "universe": {
           "type": "string",
           "description": "Universe slug (`top_10`, `top_100` or one of yours) to scope the stream. Not combinable with `ticker`."
+        },
+        "from": {
+          "type": "string",
+          "description": "Events at/after this instant — strict ISO: `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM[:SS]Z`. A bare `YYYY-MM-DD` means from the start of that day. For news, analyst ratings and estimate revisions the day is the ET calendar day (a story at 21:00 ET on Nov 2 is Nov 2); dated kinds use their own dates."
+        },
+        "to": {
+          "type": "string",
+          "description": "Window end — same strict ISO subset. A bare `YYYY-MM-DD` means through the end of that day; a timestamp is exclusive (events strictly before it). For news, analyst ratings and estimate revisions the day is the ET calendar day; dated kinds use their own dates."
         },
         "signal": {
           "type": "string",
@@ -1108,13 +1117,16 @@ export const tools: readonly ToolDef[] = [
           "type": "integer",
           "description": "Only with `kind=signal`. Merges an exit and re-entry closer than N seconds into one span. Needs one `signal` and a `ticker` list, and does not combine with `q`, `group_by` or `join=state`."
         },
-        "from": {
+        "q": {
           "type": "string",
-          "description": "Events at/after this instant — strict ISO: `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM[:SS]Z`. A bare `YYYY-MM-DD` means from the start of that day. For news, analyst ratings and estimate revisions the day is the ET calendar day (a story at 21:00 ET on Nov 2 is Nov 2); dated kinds use their own dates."
+          "description": "SQL WHERE over `id`, `ticker`, `ts`, `kind` and `payload` (plus the ticker's signals with `join=state`). With one `kind`, its payload fields are typed columns by bare name: `amount > 1`, `firm ILIKE 'Morgan Stanley'`, `relevance >= 0.8` on news (List event kinds lists them); with several kinds, use `payload->>'…'`. Max 4000 chars. ANDs with the other filters."
         },
-        "to": {
+        "join": {
           "type": "string",
-          "description": "Window end — same strict ISO subset. A bare `YYYY-MM-DD` means through the end of that day; a timestamp is exclusive (events strictly before it). For news, analyst ratings and estimate revisions the day is the ET calendar day; dated kinds use their own dates."
+          "description": "Set to `state` to use the ticker's signals in `q`, `select`, `group_by` and `having`, read as of each event's timestamp at the grain `grain` picks. On the daily grain an event on day D reads D-1's row, never D's close. A signal and a payload field with the same name (`price` on insider and signal events, `cik` on filing) resolve to the signal; spell the field `payload->>'price'`.",
+          "enum": [
+            "state"
+          ]
         },
         "grain": {
           "type": "string",
@@ -1127,20 +1139,13 @@ export const tools: readonly ToolDef[] = [
           ],
           "default": "auto"
         },
-        "join": {
+        "select": {
           "type": "string",
-          "description": "Set to `state` to use the ticker's signals in `q`, `select`, `group_by` and `having`, read as of each event's timestamp at the grain `grain` picks. On the daily grain an event on day D reads D-1's row, never D's close. A signal and a payload field with the same name (`price` on insider and signal events, `cik` on filing) resolve to the signal; spell the field `payload->>'price'`.",
-          "enum": [
-            "state"
-          ]
+          "description": "Without `group_by`: what each result carries. `id`, `ticker`, `ts` and `kind` always, then the names you list, each at the top level of the result: `payload`, a payload field of the one kind named (`firm`, or `payload->>'firm'`) and with `join=state` a ticker signal. With `group_by`: the rollup's output columns (default: the group keys + `COUNT(*) AS events`), named with `AS` or for you as on `group_by`."
         },
         "group_by": {
           "type": "string",
           "description": "Comma list of rollup keys — switches the response to rollups. Columns (`kind`, `ticker`), payload fields (`firm`, or the explicit `payload->>'firm'`) and expressions over them all roll up. Name a key with `AS` to choose its JSON key: `payload->>'firm' AS firm`. Un-named keys are named for you — a payload read takes its key (`payload->>'firm'` → `firm`), a function keeps the function's name (`lower(ticker)` → `lower`), and anything else falls back to `group_1`, `group_2`."
-        },
-        "select": {
-          "type": "string",
-          "description": "Without `group_by`: what each result carries. `id`, `ticker`, `ts` and `kind` always, then the names you list, each at the top level of the result: `payload`, a payload field of the one kind named (`firm`, or `payload->>'firm'`) and with `join=state` a ticker signal. With `group_by`: the rollup's output columns (default: the group keys + `COUNT(*) AS events`), named with `AS` or for you as on `group_by`."
         },
         "having": {
           "type": "string",
@@ -1175,18 +1180,18 @@ export const tools: readonly ToolDef[] = [
       "path": "/v2/events",
       "paramLocation": {
         "kind": "query",
-        "q": "query",
         "ticker": "query",
         "universe": "query",
+        "from": "query",
+        "to": "query",
         "signal": "query",
         "transition": "query",
         "merge_gap_seconds": "query",
-        "from": "query",
-        "to": "query",
-        "grain": "query",
+        "q": "query",
         "join": "query",
-        "group_by": "query",
+        "grain": "query",
         "select": "query",
+        "group_by": "query",
         "having": "query",
         "order": "query",
         "dir": "query",
@@ -1236,10 +1241,6 @@ export const tools: readonly ToolDef[] = [
             "estimate_revision"
           ]
         },
-        "q": {
-          "type": "string",
-          "description": "The filter, as on Query events with `join=state`: the event's own fields (`id`, `ticker`, `ts`, `kind`, `payload`, and with one kind its payload fields by bare name) and the ticker's signals at fire time, in one WHERE clause. A payload field and a signal with the same name resolve to the signal, as on Query events: `price` on insider, `cik` on filing. Spell the event's own value `payload->>'price'`. Custom signals are expanded and frozen at creation."
-        },
         "ticker": {
           "type": "string",
           "description": "One ticker or a comma list (up to 50). Not combinable with `universe`. Omit both for every ticker."
@@ -1247,6 +1248,10 @@ export const tools: readonly ToolDef[] = [
         "universe": {
           "type": "string",
           "description": "Scope to a universe slug (`top_10`, `top_100` or one of yours)."
+        },
+        "q": {
+          "type": "string",
+          "description": "The filter, as on Query events with `join=state`: the event's own fields (`id`, `ticker`, `ts`, `kind`, `payload`, and with one kind its payload fields by bare name) and the ticker's signals at fire time, in one WHERE clause. A payload field and a signal with the same name resolve to the signal, as on Query events: `price` on insider, `cik` on filing. Spell the event's own value `payload->>'price'`. Custom signals are expanded and frozen at creation."
         },
         "select": {
           "type": "string",
@@ -1288,9 +1293,9 @@ export const tools: readonly ToolDef[] = [
       "path": "/v2/events/subscribe",
       "paramLocation": {
         "kind": "body",
-        "q": "body",
         "ticker": "body",
         "universe": "body",
+        "q": "body",
         "select": "body",
         "channel": "body",
         "target_url": "body",
@@ -1760,7 +1765,7 @@ export const tools: readonly ToolDef[] = [
   },
   {
     "name": "tickerbot_update_webhook",
-    "description": "Edits a webhook in place; send only the fields you want to change. Send only what changes. The trigger takes the filters of the subscribe that made the webhook (subscription_origin.type: scan q/universe/select/order/dir; ticker q/select; signal condition/universe/select; event kind/ticker/universe/q/select; news search/ticker/universe/min_relevance/q/select), validated like a new subscribe; a changed trigger fires once for every current match. enabled=true turns a disabled webhook back on. Unknown fields are a 400.",
+    "description": "Edits a webhook in place; send only the fields you want to change. Send only what changes. The trigger takes the filters of the subscribe that made the webhook (subscription_origin.type: scan q/universe/select/order/dir; ticker q/select; signal condition/universe/select; event kind/ticker/universe/q/select; news search/ticker/universe/min_relevance/q/select), validated like a new subscribe; a change to the filters fires only on new matches (what already matches or already happened does not fire), while an edit of select/order/dir keeps what already matched. enabled=true turns a disabled webhook back on. Unknown fields are a 400.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1787,11 +1792,11 @@ export const tools: readonly ToolDef[] = [
         },
         "condition": {
           "type": "string",
-          "description": "Signal webhooks: the bound, in Get a signal's grammar (`<30`)."
+          "description": "Signal webhooks: the bound, in Get a signal's grammar (`<30`). On a ticker webhook it is the older name of `q`."
         },
         "q": {
           "type": "string",
-          "description": "Scan, ticker, event and news webhooks: the filter, in the grammar of the subscribe that made the webhook. On an event webhook it replaces the whole filter."
+          "description": "Scan, ticker, event and news webhooks: the filter, in the grammar of the subscribe that made the webhook. On an event webhook it replaces the whole filter. A change to the filters (`q`, `condition`, `universe`, `kind`, `ticker`, `search`, `min_relevance`) fires only on new matches; an edit of `select`, `order` or `dir` keeps what already matched."
         },
         "ticker": {
           "type": "string",
@@ -1858,7 +1863,7 @@ export const tools: readonly ToolDef[] = [
         },
         "enabled": {
           "type": "boolean",
-          "description": "`false` turns the webhook off. `true` turns a disabled webhook back on: your webhook limit is checked, the trigger is checked again, and it starts clean, firing once for every current match."
+          "description": "`false` turns the webhook off. `true` turns a disabled webhook back on: your webhook limit is checked and the trigger is checked again. A plain re-enable starts clean and fires once for every current match; after a change to the trigger's filters (in this call or while it was off) it fires only on new matches."
         }
       },
       "required": [
@@ -1896,6 +1901,38 @@ export const tools: readonly ToolDef[] = [
       },
       "pathAliases": {
         "id": "webhook"
+      }
+    }
+  },
+  {
+    "name": "tickerbot_enable_webhook",
+    "description": "Deprecated: works until 2027-01-12, then is removed. Turns a disabled webhook back on (a webhook disabled after repeated delivery failures, or one you turned off). It is tickerbot_update_webhook with enabled=true: call that instead.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "webhook": {
+          "type": "string",
+          "description": "Webhook id."
+        }
+      },
+      "required": [
+        "webhook"
+      ]
+    },
+    "endpoint": {
+      "method": "PATCH",
+      "path": "/v2/webhooks/{webhook}",
+      "paramLocation": {
+        "webhook": "path"
+      },
+      "accepts": {
+        "id": "path"
+      },
+      "pathAliases": {
+        "id": "webhook"
+      },
+      "fixedBody": {
+        "enabled": true
       }
     }
   },

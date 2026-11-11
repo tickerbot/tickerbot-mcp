@@ -180,6 +180,12 @@ function buildRequest(
   // step 3: `api_version=2027-01-12` on Bars and History, so they answer
   // `data` — one symbol: its rows; a comma list: keyed by symbol).
   for (const [k, v] of Object.entries(tool.endpoint.fixedQuery ?? {})) query.set(k, String(v))
+  // Fixed body fields (endpoint.fixedBody: a deprecated tool built from its
+  // successor, tickerbot_enable_webhook = PATCH `enabled: true`).
+  for (const [k, v] of Object.entries(tool.endpoint.fixedBody ?? {})) {
+    body[k] = v
+    bodyHasContent = true
+  }
 
   // Verify no path placeholders left unfilled
   const unfilled = path.match(/\{([a-zA-Z_]+)\}/)

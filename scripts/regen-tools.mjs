@@ -69,6 +69,9 @@ export interface ToolDef {
     /** Query values every call sends (TB-570 step 3: \`api_version\`, so
      *  Bars and History answer the \`data\` shape the descriptions name). */
     fixedQuery?: Record<string, string>
+    /** Body fields every call sends (a deprecated tool built from its
+     *  successor: tickerbot_enable_webhook is PATCH \`enabled: true\`). */
+    fixedBody?: Record<string, unknown>
   }
 }
 
@@ -104,6 +107,7 @@ const snapshot = tools.map((t) => ({
     ...(t.endpoint.accepts ? { accepts: t.endpoint.accepts } : {}),
     ...(t.endpoint.pathAliases ? { pathAliases: t.endpoint.pathAliases } : {}),
     ...(t.endpoint.fixedQuery ? { fixedQuery: t.endpoint.fixedQuery } : {}),
+    ...(t.endpoint.fixedBody ? { fixedBody: t.endpoint.fixedBody } : {}),
   },
 }))
 writeFileSync(out, HEADER + JSON.stringify(snapshot, null, 2) + FOOTER)
