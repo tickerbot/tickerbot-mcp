@@ -66,7 +66,7 @@ Add to `.vscode/mcp.json` in your workspace:
 
 ## Tools
 
-30 tools covering scans, signals, tickers (state, history, bars, coverage, ETF holdings), events, news, universes and webhook subscriptions. Bars and History answer `data`: one symbol gives its rows, a comma list gives them keyed by symbol.
+32 tools covering scans, signals, tickers (state, history, bars, coverage, ETF holdings), events and their kinds, news, universes and webhook subscriptions (scan, signal, ticker and events). Bars and History answer `data`: one symbol gives its rows, a comma list gives them keyed by symbol.
 
 | Tool | Endpoint |
 | --- | --- |
@@ -77,6 +77,7 @@ Add to `.vscode/mcp.json` in your workspace:
 | `tickerbot_get_signal` | `GET /v2/signals/{signal}` |
 | `tickerbot_update_custom_signal` | `PATCH /v2/signals/{signal}` |
 | `tickerbot_delete_custom_signal` | `DELETE /v2/signals/{signal}` |
+| `tickerbot_subscribe_signal` | `POST /v2/signals/{signal}/subscribe` |
 | `tickerbot_list_tickers` | `GET /v2/tickers` |
 | `tickerbot_get_ticker` | `GET /v2/tickers/{ticker}` |
 | `tickerbot_get_history` | `GET /v2/tickers/{ticker}/history` |
@@ -85,6 +86,7 @@ Add to `.vscode/mcp.json` in your workspace:
 | `tickerbot_get_ticker_coverage` | `GET /v2/tickers/{ticker}/coverage` |
 | `tickerbot_get_etf_holdings` | `GET /v2/tickers/{ticker}/holdings` |
 | `tickerbot_list_events` | `GET /v2/events` |
+| `tickerbot_list_event_kinds` | `GET /v2/events/kinds` |
 | `tickerbot_subscribe_events` | `POST /v2/events/subscribe` |
 | `tickerbot_search_news` | `GET /v2/news` |
 | `tickerbot_list_universes` | `GET /v2/universes` |
