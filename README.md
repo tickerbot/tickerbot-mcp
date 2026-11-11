@@ -2,6 +2,8 @@
 
 Model Context Protocol server for [Tickerbot](https://tickerbot.io) — the stock market, in SQL. Install in Claude, Cursor, VS Code Copilot, and other MCP-compatible clients to scan ~14,500 US-listed equities plus a curated set of rates, FX and crypto series, replay any day, or subscribe a query — across 421+ signal columns.
 
+This package is a thin stdio bridge to the hosted Tickerbot MCP server at `https://api.tickerbot.io/mcp`. On start it reads the tool list from that server with your key, and it forwards every tool call there and returns the result unchanged. A tool added or changed on Tickerbot reaches you the next time your client starts the server, with no package update. Each request to the hosted server carries an `X-Tickerbot-MCP-Client: @tickerbot/mcp-server/<version>` header, so Tickerbot's call log can tell this package's traffic from other MCP clients; it is a label only.
+
 ## Install
 
 You need a Tickerbot API key. Get one from your [dashboard](https://tickerbot.io/dashboard).
@@ -66,7 +68,7 @@ Add to `.vscode/mcp.json` in your workspace:
 
 ## Tools
 
-33 tools covering scans, signals, tickers (state, history, bars, coverage, ETF holdings), events and their kinds, news, universes and webhook subscriptions (scan, signal, ticker, events and news). Bars and History answer `data`: one symbol gives its rows, a comma list gives them keyed by symbol.
+The tools are whatever the hosted server lists when the bridge starts. At the time of this release that is 33 tools covering scans, signals, tickers (state, history, bars, coverage, ETF holdings), events and their kinds, news, universes and webhook subscriptions (scan, signal, ticker, events and news). Bars and History answer `data`: one symbol gives its rows, a comma list gives them keyed by symbol.
 
 | Tool | Endpoint |
 | --- | --- |
@@ -106,6 +108,10 @@ Add to `.vscode/mcp.json` in your workspace:
 
 Strategies are not exposed via MCP — see the [REST API docs](https://tickerbot.io/api) for those.
 
+### When the hosted server can't be reached
+
+If `api.tickerbot.io/mcp` does not answer at start, the bridge serves the tool list bundled with this version, runs each call itself against the REST API, and writes a warning to stderr. The bundled list can be behind the server's. The bridge retries the server at most once a minute (on `tools/list`) and switches back when it answers. With no `TICKERBOT_API_KEY` set it does not contact the server: it lists the bundled tools and every call answers with how to set a key.
+
 ## Examples
 
 Open Claude and try:
@@ -122,12 +128,20 @@ Open Claude and try:
 
 | Env var | Default | Purpose |
 | --- | --- | --- |
-| `TICKERBOT_API_KEY` | *(required)* | Your API key. Sent as `Authorization: Bearer <key>` on every call. |
-| `TICKERBOT_API_URL` | `https://api.tickerbot.io` | Override the API base URL (for staging or self-hosted). |
+| `TICKERBOT_API_KEY` | *(required)* | Your API key. Sent as `Authorization: Bearer <key>` to the hosted MCP server (and to the REST API in fallback). |
+| `TICKERBOT_API_URL` | `https://api.tickerbot.io` | Override the base URL. The bridge connects to `<base>/mcp`; the fallback calls `<base>/v2/...`. |
 
 ## Remote install
 
-For consumer chat apps (Claude.ai web/mobile, ChatGPT) that don't run subprocesses, use the hosted remote MCP endpoint at `https://mcp.tickerbot.io` instead. See [tickerbot.io/mcp-server](https://tickerbot.io/mcp-server) for setup.
+Clients that connect to an MCP server by URL (Claude.ai web/mobile, ChatGPT, and most desktop and IDE clients) can use the hosted server at `https://api.tickerbot.io/mcp` directly and sign in with OAuth, no package needed. See [tickerbot.io/docs/mcp](https://tickerbot.io/docs/mcp) for setup.
+
+## Development
+
+```bash
+npm install
+npm test                         # builds, then runs the bridge against a stubbed hosted server
+node scripts/regen-tools.mjs     # refresh the bundled fallback list from ../tickerbot (optional)
+```
 
 ## License
 

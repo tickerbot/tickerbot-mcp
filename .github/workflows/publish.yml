@@ -41,8 +41,8 @@ jobs:
       - name: Install
         run: npm ci
 
-      - name: Build
-        run: npm run build
+      - name: Build and test
+        run: npm test
 
       - name: Verify package version matches tag
         run: |
@@ -57,10 +57,10 @@ jobs:
       - name: Smoke test (stdio handshake + tools/list)
         run: |
           # Verify the protocol handshake works and tools/list returns a
-          # non-empty catalog. We force the baked-snapshot path by pointing
-          # TICKERBOT_API_URL at an unreachable host — otherwise the count
-          # depends on what main_service is currently serving (runtime
-          # discovery) and the test becomes brittle.
+          # non-empty catalog. We force the bundled-snapshot fallback by
+          # pointing TICKERBOT_API_URL at an unreachable host — otherwise the
+          # count depends on what the hosted MCP server is serving and the
+          # test becomes brittle.
           OUT=$( (
             printf '%s\n' \
               '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}' \

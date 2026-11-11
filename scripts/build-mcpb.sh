@@ -20,8 +20,12 @@ npm run build
 
 echo "→ Bundling all runtime deps into server/index.cjs via esbuild…"
 mkdir -p mcpb/server
+# The CJS bundle has no import.meta.url to find package.json by, so the
+# name + version are inlined (src/index.ts reads TICKERBOT_MCP_PACKAGE).
+PKG_JSON=$(node -p "JSON.stringify(JSON.stringify((({name,version})=>({name,version}))(require('./package.json'))))")
 npx esbuild dist/index.js \
   --bundle \
+  "--define:process.env.TICKERBOT_MCP_PACKAGE=$PKG_JSON" \
   --platform=node \
   --target=node18 \
   --format=cjs \
