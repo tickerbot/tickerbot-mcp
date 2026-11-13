@@ -149,12 +149,25 @@ function buildRequest(
   let bodyHasContent = false
 
   for (const [key, value] of Object.entries(args)) {
-    if (value === undefined || value === null || value === '') continue
     // Declared params first; then the older names the route still accepts
-    // (endpoint.accepts, TB-570), sent where the route reads them. Anything
-    // else is ignored. Mirrors main_service/mcp/handler.js.
+    // (endpoint.accepts, TB-570), sent where the route reads them. The name
+    // is judged BEFORE the blank skip (TB-749): any other argument, blank
+    // included, is forwarded so the API answers 400 `unknown_parameter`
+    // instead of the call silently succeeding without it. A query param on
+    // GET, a body field otherwise.
     const where = tool.endpoint.paramLocation[key] ?? tool.endpoint.accepts?.[key]
-    if (!where) continue // unknown param, ignore
+    if (!where) {
+      if (value === undefined) continue
+      if (tool.endpoint.method === 'GET') {
+        query.append(key, value === null ? '' : typeof value === 'object' ? JSON.stringify(value) : String(value))
+      } else {
+        body[key] = value
+        bodyHasContent = true
+      }
+      continue
+    }
+    // A blank DECLARED param means "not sent".
+    if (value === undefined || value === null || value === '') continue
 
     if (where === 'path') {
       // An older path-param name fills the slot the docs name it by
@@ -174,10 +187,6 @@ function buildRequest(
     }
   }
 
-  // Fixed query values the tool always sends (endpoint.fixedQuery, TB-570
-  // step 3: `api_version=2027-01-12` on Bars and History, so they answer
-  // `data` — one symbol: its rows; a comma list: keyed by symbol).
-  for (const [k, v] of Object.entries(tool.endpoint.fixedQuery ?? {})) query.set(k, String(v))
   // Fixed body fields (endpoint.fixedBody: a deprecated tool built from its
   // successor, tickerbot_enable_webhook = PATCH `enabled: true`).
   for (const [k, v] of Object.entries(tool.endpoint.fixedBody ?? {})) {

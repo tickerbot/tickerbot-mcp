@@ -68,7 +68,7 @@ Add to `.vscode/mcp.json` in your workspace:
 
 ## Tools
 
-The tools are whatever the hosted server lists when the bridge starts. At the time of this release that is 33 tools covering scans, signals, tickers (state, history, bars, coverage, ETF holdings), events and their kinds, news, universes and webhook subscriptions (scan, signal, ticker, events and news). Bars and History answer `data`: one symbol gives its rows, a comma list gives them keyed by symbol.
+The tools are whatever the hosted server lists when the bridge starts. At the time of this release that is 35 tools covering scans, signals, tickers (state, history, bars, coverage, ETF holdings), events and their kinds, news, universes and webhook subscriptions (scan, signal, ticker, events and news). History answers `series` keyed by symbol, one flat row per grain step, for one ticker or a comma list. `tickerbot_list_events` and `tickerbot_search_news` were renamed `tickerbot_query_events` and `tickerbot_query_news`; the old names still work, as deprecated tools, until 2027-01-12. An argument a tool does not declare is sent to the API, which answers `unknown_parameter` for it.
 
 | Tool | Endpoint |
 | --- | --- |
@@ -87,24 +87,26 @@ The tools are whatever the hosted server lists when the bridge starts. At the ti
 | `tickerbot_get_bars` | `GET /v2/tickers/{ticker}/bars/{interval}` |
 | `tickerbot_get_ticker_coverage` | `GET /v2/tickers/{ticker}/coverage` |
 | `tickerbot_get_etf_holdings` | `GET /v2/tickers/{ticker}/holdings` |
-| `tickerbot_list_events` | `GET /v2/events` |
+| `tickerbot_query_events` | `GET /v2/events` |
+| `tickerbot_list_events` | `GET /v2/events` (deprecated: use `tickerbot_query_events`; works until 2027-01-12) |
 | `tickerbot_list_event_kinds` | `GET /v2/events/kinds` |
 | `tickerbot_subscribe_events` | `POST /v2/events/subscribe` |
-| `tickerbot_search_news` | `GET /v2/news` |
+| `tickerbot_query_news` | `GET /v2/news` |
+| `tickerbot_search_news` | `GET /v2/news` (deprecated: use `tickerbot_query_news`; works until 2027-01-12) |
 | `tickerbot_subscribe_news` | `POST /v2/news/subscribe` |
 | `tickerbot_list_universes` | `GET /v2/universes` |
 | `tickerbot_create_universe` | `POST /v2/universes` |
-| `tickerbot_get_universe` | `GET /v2/universes/{id}` |
-| `tickerbot_update_universe` | `PATCH /v2/universes/{id}` |
-| `tickerbot_delete_universe` | `DELETE /v2/universes/{id}` |
+| `tickerbot_get_universe` | `GET /v2/universes/{universe}` |
+| `tickerbot_update_universe` | `PATCH /v2/universes/{universe}` |
+| `tickerbot_delete_universe` | `DELETE /v2/universes/{universe}` |
 | `tickerbot_list_webhooks` | `GET /v2/webhooks` |
-| `tickerbot_get_webhook` | `GET /v2/webhooks/{id}` |
-| `tickerbot_update_webhook` | `PATCH /v2/webhooks/{id}` |
-| `tickerbot_delete_webhook` | `DELETE /v2/webhooks/{id}` |
-| `tickerbot_list_webhook_deliveries` | `GET /v2/webhooks/{id}/deliveries` |
-| `tickerbot_redeliver_webhook_delivery` | `POST /v2/webhooks/{id}/deliveries/{delivery_id}/redeliver` |
-| `tickerbot_enable_webhook` | `POST /v2/webhooks/{id}/enable` |
-| `tickerbot_test_webhook` | `POST /v2/webhooks/{id}/test` |
+| `tickerbot_get_webhook` | `GET /v2/webhooks/{webhook}` |
+| `tickerbot_update_webhook` | `PATCH /v2/webhooks/{webhook}` |
+| `tickerbot_enable_webhook` | `PATCH /v2/webhooks/{webhook}` (deprecated: use `tickerbot_update_webhook` with `enabled: true`; works until 2027-01-12) |
+| `tickerbot_delete_webhook` | `DELETE /v2/webhooks/{webhook}` |
+| `tickerbot_list_webhook_deliveries` | `GET /v2/webhooks/{webhook}/deliveries` |
+| `tickerbot_redeliver_webhook_delivery` | `POST /v2/webhooks/{webhook}/deliveries/{delivery}/redeliver` |
+| `tickerbot_test_webhook` | `POST /v2/webhooks/{webhook}/test` |
 
 Strategies are not exposed via MCP — see the [REST API docs](https://tickerbot.io/api) for those.
 

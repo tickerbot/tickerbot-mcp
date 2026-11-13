@@ -67,9 +67,6 @@ export interface ToolDef {
     /** An older path-param name -> the slot the docs name it by (TB-570
      *  step 3: \`id\` fills {universe} / {webhook}, \`delivery_id\` {delivery}). */
     pathAliases?: Record<string, string>
-    /** Query values every call sends (TB-570 step 3: \`api_version\`, so
-     *  Bars and History answer the \`data\` shape the descriptions name). */
-    fixedQuery?: Record<string, string>
     /** Body fields every call sends (a deprecated tool built from its
      *  successor: tickerbot_enable_webhook is PATCH \`enabled: true\`). */
     fixedBody?: Record<string, unknown>
@@ -81,6 +78,8 @@ interface JsonSchemaProp {
   description: string
   enum?: readonly string[]
   default?: unknown
+  /** A regex the value must match (an id form, a date). */
+  pattern?: string
   items?: { type: string }
   /** Nested object params (create_webhook.trigger) carry their own shape. */
   properties?: Record<string, JsonSchemaProp>
@@ -107,7 +106,6 @@ const snapshot = tools.map((t) => ({
     method: t.endpoint.method, path: t.endpoint.path, paramLocation: t.endpoint.paramLocation,
     ...(t.endpoint.accepts ? { accepts: t.endpoint.accepts } : {}),
     ...(t.endpoint.pathAliases ? { pathAliases: t.endpoint.pathAliases } : {}),
-    ...(t.endpoint.fixedQuery ? { fixedQuery: t.endpoint.fixedQuery } : {}),
     ...(t.endpoint.fixedBody ? { fixedBody: t.endpoint.fixedBody } : {}),
   },
 }))
