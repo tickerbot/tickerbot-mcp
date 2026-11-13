@@ -34,9 +34,6 @@ export interface ToolDef {
     /** An older path-param name -> the slot the docs name it by (TB-570
      *  step 3: `id` fills {universe} / {webhook}, `delivery_id` {delivery}). */
     pathAliases?: Record<string, string>
-    /** Query values every call sends (TB-570 step 3: `api_version`, so
-     *  Bars and History answer the `data` shape the descriptions name). */
-    fixedQuery?: Record<string, string>
     /** Body fields every call sends (a deprecated tool built from its
      *  successor: tickerbot_enable_webhook is PATCH `enabled: true`). */
     fixedBody?: Record<string, unknown>
@@ -48,6 +45,8 @@ interface JsonSchemaProp {
   description: string
   enum?: readonly string[]
   default?: unknown
+  /** A regex the value must match (an id form, a date). */
+  pattern?: string
   items?: { type: string }
   /** Nested object params (create_webhook.trigger) carry their own shape. */
   properties?: Record<string, JsonSchemaProp>
@@ -63,19 +62,19 @@ export const tools: readonly ToolDef[] = [
       "properties": {
         "q": {
           "type": "string",
-          "description": "SQL WHERE expression. Max 4000 chars; semicolons, comments and write keywords are rejected. Your custom signals are valid here — each expands to its SQL at run time. To scan named tickers: `ticker IN ('AAPL', 'MSFT')`; to scan one asset class: `asset_class = 'crypto'`."
+          "description": "SQL WHERE expression. Max 4000 chars; semicolons, comments and write keywords are rejected. Your custom signals are valid here: each expands to its SQL at run time. To scan named tickers: `ticker IN ('AAPL', 'MSFT')`; to scan one asset class: `asset_class = 'crypto'`."
         },
         "universe": {
           "type": "string",
-          "description": "Slug of a system universe (`top_10`, `top_100`) or one of your own. Omitted, the screen runs across every ticker."
+          "description": "Scope to a built-in universe (`top_10`, `top_100`) or one of your own, by id. An unknown one answers 200 with no results and its id in `not_found`. Omitted, the screen runs across every ticker."
         },
         "asof": {
           "type": "string",
-          "description": "Target moment as `YYYY-MM-DD` (that day's close) or an ISO timestamp (that intraday moment; daily-only signals then carry the previous session's close, never that day's) — the same read as it stood then, unlimited depth. In `q`, `now()` and `current_date` mean that moment, so `last_earnings_date >= now() - interval '7 days'` backtests as written. Full contract under As of a past date."
+          "description": "Target moment as `YYYY-MM-DD` (that day's close) or an ISO timestamp (that intraday moment; daily-only signals then carry the previous session's close, never that day's): the same read as it stood then, unlimited depth. In `q`, `now()` and `current_date` mean that moment, so `last_earnings_date >= now() - interval '7 days'` backtests as written. Full contract under As of a past date."
         },
         "grain": {
           "type": "string",
-          "description": "Only with `asof`. Grain the past state is read at: `1m`, `1h`, `1d` or `auto` (default). `auto` blends: each signal comes from its freshest grain at or before the instant (minute, then hourly, then the last closed daily session), so nothing is refused for grain and no ticker is dropped; `_meta.blended` and `_meta.grains_present` say what contributed. Pin a grain for a faster read with every ticker on the same clock. A signal the pinned grain does not store is a `400 interval_unavailable` naming the grains that carry it (`rsi_14`, fundamentals and valuation ratios are `1d`-only).",
+          "description": "Only with `asof`. Grain the past state is read at: `1m`, `1h`, `1d` or `auto` (default). `auto` blends: each signal comes from its freshest grain at or before the instant (minute, then hourly, then the last closed daily session), so nothing is refused for grain and no ticker is dropped; `_meta.blended` and `_meta.grains_present` say what contributed. Pin a grain for the fastest response: one grain is read instead of three, and every ticker is captured on the same clock. A signal the pinned grain does not store is a `400 interval_unavailable` naming the grains that carry it (`rsi_14`, fundamentals and valuation ratios are `1d`-only). `1m` and `1h` need a timestamp `asof`; with a bare date they are a `400 interval_unavailable`.",
           "enum": [
             "1m",
             "1h",
@@ -86,11 +85,11 @@ export const tools: readonly ToolDef[] = [
         },
         "select": {
           "type": "string",
-          "description": "What each result carries, as in SQL. Omitted: the default row (ticker, name, asset_class, asset_type, price, change_1d_pct, gap_pct, relative_volume, market_cap) plus every signal used in `q` and `order`; a custom signal appears as its own value, and a cross-ticker reference (`SPY.sma_50`) is not added. A list: exactly those items, `ticker` always included; expressions with `AS` work (`price / sma_50 AS dist`) and are validated like `q`. `*`: every signal in the catalog. All aggregates (`count(*), avg(rsi_14)`) without `group_by`: one summary row, in `groups`. With `group_by`, each item is an aggregate or a group key. Aggregates: count/avg/sum/min/max/stddev/string_agg/bool_and/bool_or, plus `FILTER (WHERE …)`."
+          "description": "What each result carries, as in SQL. Omitted: the default row (ticker, name, asset_class, asset_type, price, change_1d_pct, gap_pct, relative_volume, market_cap) plus every signal used in `q` and `order`; a custom signal appears as its own value, and a cross-ticker reference (`SPY.sma_50`) is not added. A list: exactly those items, `ticker` always included; expressions with `AS` work (`price / sma_50 AS dist`) and are validated like `q`. `*`: every signal in the catalog. All aggregates (`count(*), avg(rsi_14)`) without `group_by`: one summary row, in `results`. With `group_by`, each item is an aggregate or a group key. Aggregates: count/avg/sum/min/max/stddev/string_agg/bool_and/bool_or, plus `FILTER (WHERE …)`."
         },
         "group_by": {
           "type": "string",
-          "description": "GROUPED SCAN: 1–6 group keys (signals, expressions or one of your custom signals as a boolean key). Results become rollups in `groups`, each carrying its keys. Name a key with `AS` to choose its JSON key (`market_cap > 1e11 AS mega`); an un-named expression is named for you rather than returned as `?column?`. Default `select`: the keys + `COUNT(*) AS tickers`. Works with `asof`; does not paginate."
+          "description": "Groups the scan: 1–6 group keys (signals, expressions or one of your custom signals as a boolean key). Results become rollups in `results`, each carrying its keys. Name a key with `AS` to choose its JSON key (`market_cap > 1e11 AS mega`); an un-named expression is named for you. Default `select`: the keys + `COUNT(*) AS tickers`. Works with `asof`; does not paginate."
         },
         "having": {
           "type": "string",
@@ -117,7 +116,7 @@ export const tools: readonly ToolDef[] = [
         },
         "cursor": {
           "type": "string",
-          "description": "Opaque cursor from the previous response's `next_cursor`. Row scans only."
+          "description": "The previous response's `next_cursor`. Send it with the same params as the first page (`limit` may change); a page whose params differ is a 400 naming the param. Row scans only."
         }
       },
       "required": [
@@ -152,25 +151,25 @@ export const tools: readonly ToolDef[] = [
   },
   {
     "name": "tickerbot_subscribe_scan",
-    "description": "Gets you an alert by webhook each time a ticker starts matching a screen. Webhooks need a paid plan (Free has no webhook slots). Use for \"alert me when this happens\" requests. A signal alert is a scan on it: `q: golden_cross`, or `q: rsi_14 > 70` for a numeric one.",
+    "description": "Gets you an alert by webhook each time a ticker starts matching a screen. Webhooks need a paid plan (Free has no webhook slots). Use for \"alert me when this happens\" requests. For one signal use tickerbot_subscribe_signal; a compound condition is a scan: `q: golden_cross AND rsi_14 > 70`.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "q": {
           "type": "string",
-          "description": "WHERE-clause expression using signal names — the same grammar and the same 4000-char cap as `POST /v2/scan`, so anything scannable is subscribable. Custom signals are expanded and frozen in at creation."
+          "description": "WHERE-clause expression using signal names: the same grammar and the same 4000-char cap as `POST /v2/scan`, so anything scannable is subscribable. Custom signals are expanded and frozen in at creation."
         },
         "universe": {
           "type": "string",
-          "description": "System or user-owned universe to scope the screen. Unknown universes are a 404 `universe_not_found`."
+          "description": "Scope to a built-in universe (`top_10`, `top_100`) or one of your own, by id. An unknown one is a 400 `universe_not_found` naming it."
         },
         "select": {
           "type": "string",
-          "description": "What each delivered match carries. Omitted: the scan default row (ticker, name, asset_class, asset_type, price, change_1d_pct, gap_pct, relative_volume, market_cap) plus every signal used in `q` and `order`. A list of signal names: exactly those, `ticker` always included. Each must be a real signal; unknown ones are rejected at creation."
+          "description": "What each delivered match carries. Omitted: the scan default row (ticker, name, asset_class, asset_type, price, change_1d_pct, gap_pct, relative_volume, market_cap) plus every signal used in `q` and `order`. A list of signal names: exactly those, `ticker` always included. Each must be a real signal; unknown ones are rejected at creation. `*` and expressions are a 400: a delivery lists up to 100 matches, so name the signals."
         },
         "order": {
           "type": "string",
-          "description": "Signal each delivery's match lists are sorted by before the 100-result cap applies, so a truncated list is the deterministic top 100 rather than an arbitrary sample. Must be a real signal (validated at creation).",
+          "description": "Signal each delivery's match lists are sorted by before the 100-result cap applies, so a broad alert lists the same top 100 each time. Must be a real signal (validated at creation).",
           "default": "market_cap"
         },
         "dir": {
@@ -184,7 +183,7 @@ export const tools: readonly ToolDef[] = [
         },
         "channel": {
           "type": "string",
-          "description": "Delivery channel. `webhook` (POST to `target_url`), `discord` (embed to `discord_url`), `in_app` (dashboard only) or `mobile_push` (to `device_id`). Inferred when omitted: `webhook` if `target_url` is set, `discord` if `discord_url` is set, `mobile_push` if `device_id` is set, else `in_app`.",
+          "description": "Delivery channel: `webhook` (POST to `target_url`), `discord` (an embed at `discord_url`), `in_app` (the dashboard only) or `mobile_push` (to `device_id`). Inferred when omitted: `discord` if `discord_url` is set, else `mobile_push` if `device_id` is set, else `webhook` if `target_url` is set, else `in_app`. See Delivery channels.",
           "enum": [
             "webhook",
             "discord",
@@ -194,19 +193,19 @@ export const tools: readonly ToolDef[] = [
         },
         "target_url": {
           "type": "string",
-          "description": "Only with `channel=webhook`. https:// URL to POST when a ticker starts matching."
+          "description": "Only with `channel=webhook`. HTTPS URL each delivery is POSTed to."
         },
         "discord_url": {
           "type": "string",
-          "description": "Only with `channel=discord`. Discord incoming-webhook URL. Stored as a posting credential: the create response echoes it back under `channel_config`, but every later read (list, get, deliveries) strips it and sets `channel_config_present: true` instead."
+          "description": "Only with `channel=discord`. Discord incoming-webhook URL (`https://discord.com/api/webhooks/…`). Stored as a posting credential: the create response echoes it back under `channel_config`, but every later read (list, get, deliveries) strips it and sets `channel_config_present: true` instead."
         },
         "device_id": {
           "type": "string",
-          "description": "Only with `channel=mobile_push`. Device to notify, from `POST /v2/devices/register`. Unknown ids are a 404 `device_not_found`."
+          "description": "Only with `channel=mobile_push`. Device to notify, from `POST /v2/devices/register`. An unknown id is a 400 `device_not_found`."
         },
         "cadence": {
           "type": "string",
-          "description": "`realtime` (the default) is checked each time the data refreshes, about once a minute; `hourly` and `nyse_open` are checked on that schedule.",
+          "description": "How often to evaluate: `realtime` (the default) is checked each time the data refreshes, about once a minute; `hourly` and `nyse_open` are checked on that schedule.",
           "enum": [
             "realtime",
             "hourly",
@@ -215,7 +214,7 @@ export const tools: readonly ToolDef[] = [
         },
         "name": {
           "type": "string",
-          "description": "Human-readable label (up to 80 chars). Defaults to `scan: <q>`."
+          "description": "Display name, up to 80 characters. Defaults to `scan: ` plus the first 60 characters of `q`."
         }
       },
       "required": [
@@ -253,70 +252,42 @@ export const tools: readonly ToolDef[] = [
       "properties": {
         "search": {
           "type": "string",
-          "description": "Case-insensitive text match on the name and description."
+          "description": "Case-insensitive text match on the name and description. Results are ranked: an exact name match first, then names that start with the term, then names that contain it, then descriptions that have it as a whole word, then descriptions that contain it; list order within each rank. Paging a search never repeats or skips."
         },
         "kind": {
           "type": "string",
-          "description": "Filter by kind (one or a comma list). Omit to return both.",
-          "enum": [
-            "builtin",
-            "custom"
-          ]
+          "description": "Filter by kind (one or a comma list). Omit to return both. Values: builtin, custom.",
+          "pattern": "^(builtin|custom)(,(builtin|custom))*$"
         },
         "group": {
           "type": "string",
-          "description": "One taxonomy group slug or a comma list (`technicals,fundamentals`). Groups and their categories are in `taxonomy`."
+          "description": "One taxonomy group or a comma list (`technicals,fundamentals`). Each signal carries its `group`. Values: price, volume, price_action, technicals, fundamentals, events, profile, analyst, news.",
+          "pattern": "^(price|volume|price_action|technicals|fundamentals|events|profile|analyst|news)(,(price|volume|price_action|technicals|fundamentals|events|profile|analyst|news))*$"
         },
         "category": {
           "type": "string",
-          "description": "One category slug or a comma list (`oscillators,trend`)."
+          "description": "One category or a comma list (`oscillators,trend`). Each signal carries its `category`. Values: trades_quotes, bars, session_structure, highs_lows, support_resistance, volume_levels, volume_activity, performance, gaps, intraday_momentum, ranges, moving_averages, oscillators, trend, volatility_bands, income_statement, balance_sheet, cash_flow, margins_ratios, valuation, share_structure, short_interest, earnings, dividends, ipos, capital_changes, insider_activity, classification, identity, company, fund_facts, consensus_ratings, analyst_actions, price_targets, estimates, news.",
+          "pattern": "^(trades_quotes|bars|session_structure|highs_lows|support_resistance|volume_levels|volume_activity|performance|gaps|intraday_momentum|ranges|moving_averages|oscillators|trend|volatility_bands|income_statement|balance_sheet|cash_flow|margins_ratios|valuation|share_structure|short_interest|earnings|dividends|ipos|capital_changes|insider_activity|classification|identity|company|fund_facts|consensus_ratings|analyst_actions|price_targets|estimates|news)(,(trades_quotes|bars|session_structure|highs_lows|support_resistance|volume_levels|volume_activity|performance|gaps|intraday_momentum|ranges|moving_averages|oscillators|trend|volatility_bands|income_statement|balance_sheet|cash_flow|margins_ratios|valuation|share_structure|short_interest|earnings|dividends|ipos|capital_changes|insider_activity|classification|identity|company|fund_facts|consensus_ratings|analyst_actions|price_targets|estimates|news))*$"
         },
         "type": {
           "type": "string",
-          "description": "One value type or a comma list. Custom signals are always `boolean`.",
-          "enum": [
-            "numeric",
-            "boolean",
-            "string",
-            "date",
-            "timestamp",
-            "jsonb",
-            "string[]"
-          ]
+          "description": "One value type or a comma list. Custom signals are always `boolean`. Values: numeric, boolean, string, date, timestamp, object, string[].",
+          "pattern": "^(numeric|boolean|string|date|timestamp|object|string\\[\\])(,(numeric|boolean|string|date|timestamp|object|string\\[\\]))*$"
         },
         "asset_class": {
           "type": "string",
-          "description": "Signals that apply to this asset class (one or a comma list), e.g. `crypto`."
+          "description": "Signals that apply to this asset class (one or a comma list), e.g. `crypto`. Values: stocks, rates, crypto, fx.",
+          "pattern": "^(stocks|rates|crypto|fx)(,(stocks|rates|crypto|fx))*$"
         },
         "refresh": {
           "type": "string",
-          "description": "Signals that update on this schedule (one or a comma list).",
-          "enum": [
-            "1m_4am_8pm_et",
-            "1m_24_7",
-            "5m",
-            "10m",
-            "15m",
-            "30m",
-            "1h",
-            "daily",
-            "daily_after_close",
-            "weekly",
-            "monthly",
-            "quarterly",
-            "on_event",
-            "static",
-            "custom"
-          ]
+          "description": "Signals that update on this schedule (one or a comma list). Values: 1m_4am_8pm_et, 1m_24_7, 5m, 10m, 15m, 30m, 1h, daily, daily_after_close, weekly, monthly, quarterly, on_event, static, custom.",
+          "pattern": "^(1m_4am_8pm_et|1m_24_7|5m|10m|15m|30m|1h|daily|daily_after_close|weekly|monthly|quarterly|on_event|static|custom)(,(1m_4am_8pm_et|1m_24_7|5m|10m|15m|30m|1h|daily|daily_after_close|weekly|monthly|quarterly|on_event|static|custom))*$"
         },
         "grain": {
           "type": "string",
-          "description": "Signals with stored history at this grain (one or a comma list): what an as-of read or the history read can serve at it.",
-          "enum": [
-            "1m",
-            "1h",
-            "1d"
-          ]
+          "description": "Signals with stored history at this grain (one or a comma list): what an as-of read or the history read can serve at it. Values: 1m, 1h, 1d.",
+          "pattern": "^(1m|1h|1d)(,(1m|1h|1d))*$"
         },
         "select": {
           "type": "string",
@@ -328,7 +299,7 @@ export const tools: readonly ToolDef[] = [
         },
         "cursor": {
           "type": "string",
-          "description": "Opaque cursor from a prior response."
+          "description": "The previous response's `next_cursor`. Send it with the same params as the first page (`limit` may change); a page whose params differ is a 400 naming the param."
         }
       }
     },
@@ -352,17 +323,17 @@ export const tools: readonly ToolDef[] = [
   },
   {
     "name": "tickerbot_create_custom_signal",
-    "description": "Saves a named true/false SQL expression you can screen on anywhere a built-in signal works.",
+    "description": "Saves a named true/false SQL expression you can screen on, select and subscribe to like a built-in boolean.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "name": {
           "type": "string",
-          "description": "Slug — `^[a-z][a-z0-9_]{0,63}$`. Must not collide with any built-in signal name, and 15 names are reserved outright: `columns`, plus the OHLCV aliases of the history read `open`/`high`/`low`/`close`/`volume`/`vwap`/`trades` and `o`/`h`/`l`/`c`/`v`/`vw`/`n` (those resolve to bars before custom lookup). This is the signal's API handle: it's what you reference in `q` and in the CRUD path."
+          "description": "Slug matching `^[a-z][a-z0-9_]{0,63}$`. Must not collide with any built-in signal name, and 15 names are reserved outright: `columns`, plus the OHLCV aliases of the history read `open`/`high`/`low`/`close`/`volume`/`vwap`/`trades` and `o`/`h`/`l`/`c`/`v`/`vw`/`n` (those resolve to bars before custom lookup). This is the signal's API handle: it's what you reference in `q` and in the CRUD path."
         },
         "expr": {
           "type": "string",
-          "description": "Boolean SQL predicate. May reference built-in signals and other custom signals you own. Must evaluate to true/false. Max 4000 chars. Stricter grammar than scan `q`: comparisons, `AND`/`OR`/`NOT`, `IN`, `BETWEEN`, `IS [NOT] NULL`, arithmetic and the functions `abs`/`coalesce`/`round`/`least`/`greatest` only — no `LIKE`/`ILIKE`, no `CASE`, no `::` casts, no other functions. An expression that scans fine can still be rejected here with `compile_failed`. What you send is what you read back: responses echo your expression as stored, not its expansion. A signal referencing another custom of yours returns the reference as you typed it — the inlined SQL exists only internally, and is what a subscribe endpoint freezes into a webhook. The one rewrite: a signal named under its pre-2026-09-07 spelling (`bollinger_pct_b`) is stored under its current name (`bollinger_b`) and reported in `_meta.deprecated_signals`."
+          "description": "Boolean SQL predicate. May reference built-in signals and other custom signals you own. Must evaluate to true/false. Max 4000 chars. Stricter grammar than scan `q`: comparisons, `AND`/`OR`/`NOT`, `IN`, `BETWEEN`, `IS [NOT] NULL`, arithmetic and the functions `abs`/`coalesce`/`round`/`least`/`greatest`. An expression that scans fine can still be rejected here with `compile_failed`. What you send is what you read back: responses echo your expression as stored, not its expansion. A signal referencing another custom of yours returns the reference as you typed it; the inlined SQL exists only internally, and is what a subscribe endpoint freezes into a webhook. The one rewrite: a signal named under its pre-2026-09-07 spelling (`bollinger_pct_b`) is stored under its current name (`bollinger_b`) and reported in `_meta.deprecated_signals`."
         },
         "description": {
           "type": "string",
@@ -386,13 +357,13 @@ export const tools: readonly ToolDef[] = [
   },
   {
     "name": "tickerbot_get_signal",
-    "description": "Returns what one signal is (its catalog entry, the same object List signals returns for it) and every ticker matching it, live or on any past date with `asof`: a screen on that one signal. Returns `catalog` (what the signal is) every time. Booleans list their matches with no `condition`; every other type lists them only with one, typed like the signal: \">70\" (numeric), \"<YYYY-MM-DDTHH:MM:SSZ\" (timestamp), \">=YYYY-MM-DD\" (date), \"=ETF\" (string); without it you get the catalog entry and a `note`. Without `order`, a non-boolean sorts by its value in the direction the condition implies (`<` ascending, `>` descending). To know when each ticker started matching, use tickerbot_list_events with kind=signal, signal=<name>, transition=enter.",
+    "description": "Returns what one signal is (its catalog entry, the same object List signals returns for it) and every ticker matching it, live or on any past date with `asof`: a screen on that one signal. Returns `catalog` (what the signal is) every time. Booleans list their matches with no `condition`; every other type lists them only with one, typed like the signal: \">70\" (numeric), \"<YYYY-MM-DDTHH:MM:SSZ\" (timestamp), \">=YYYY-MM-DD\" (date), \"=ETF\" (string); without it you get the catalog entry and a `note`. Without `order`, a non-boolean sorts by its value in the direction the condition implies (`<` ascending, `>` descending). To know when each ticker started matching, use tickerbot_query_events with kind=signal, signal=<name>, transition=enter.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "signal": {
           "type": "string",
-          "description": "A signal name. Booleans (e.g. `golden_cross`, `above_sma_50`) are detected automatically; every other type (numeric `rsi_14`, timestamp `price_asof`, date `earnings_date`, string `asset_class`) requires a `condition`."
+          "description": "A signal name. Booleans (e.g. `golden_cross`, `above_sma_50`) are detected automatically; every other type (numeric `rsi_14`, timestamp `price_asof`, date `earnings_date`, string `asset_class`) requires a `condition`. An object or list signal (`leadership`, `etf_holders`) has no `condition` form: the read returns its catalog entry and a `note`; screen on it with `POST /v2/scan`."
         },
         "condition": {
           "type": "string",
@@ -400,15 +371,15 @@ export const tools: readonly ToolDef[] = [
         },
         "universe": {
           "type": "string",
-          "description": "Scope to a system or caller-owned universe slug."
+          "description": "Scope to a built-in universe (`top_10`, `top_100`) or one of your own, by id. An unknown one answers 200 with no results and its id in `not_found`."
         },
         "asof": {
           "type": "string",
-          "description": "Target moment as `YYYY-MM-DD` (that day's close) or an ISO timestamp (that intraday moment; daily-only signals then carry the previous session's close, never that day's) — the same read as it stood then, unlimited depth. Full contract under As of a past date."
+          "description": "Target moment as `YYYY-MM-DD` (that day's close) or an ISO timestamp (that intraday moment; daily-only signals then carry the previous session's close, never that day's): the same read as it stood then, unlimited depth. Full contract under As of a past date."
         },
         "grain": {
           "type": "string",
-          "description": "Only with `asof`. Grain the past state is read at: `1m`, `1h`, `1d` or `auto` (default). `auto` blends: each signal comes from its freshest grain at or before the instant (minute, then hourly, then the last closed daily session), so nothing is refused for grain and no ticker is dropped; `_meta.blended` and `_meta.grains_present` say what contributed. Pin a grain for the fastest response: one grain is read instead of three, and every ticker is captured on the same clock. A signal the pinned grain does not store is a `400 interval_unavailable` naming the grains that carry it (`rsi_14`, fundamentals and valuation ratios are `1d`-only).",
+          "description": "Only with `asof`. Grain the past state is read at: `1m`, `1h`, `1d` or `auto` (default). `auto` blends: each signal comes from its freshest grain at or before the instant (minute, then hourly, then the last closed daily session), so nothing is refused for grain and no ticker is dropped; `_meta.blended` and `_meta.grains_present` say what contributed. Pin a grain for the fastest response: one grain is read instead of three, and every ticker is captured on the same clock. A signal the pinned grain does not store is a `400 interval_unavailable` naming the grains that carry it (`rsi_14`, fundamentals and valuation ratios are `1d`-only). `1m` and `1h` need a timestamp `asof`; with a bare date they are a `400 interval_unavailable`.",
           "enum": [
             "1m",
             "1h",
@@ -419,7 +390,7 @@ export const tools: readonly ToolDef[] = [
         },
         "select": {
           "type": "string",
-          "description": "Signals each match carries beside `value`, e.g. `market_cap,sector`."
+          "description": "Signals each match carries beside `value`, e.g. `market_cap,sector`. `*` is every signal: the whole live row, or on an as-of read every signal the read's grain stores. An unknown signal is a 400, beside `*` too."
         },
         "order": {
           "type": "string",
@@ -440,7 +411,7 @@ export const tools: readonly ToolDef[] = [
         },
         "cursor": {
           "type": "string",
-          "description": "Opaque cursor from the previous response."
+          "description": "The previous response's `next_cursor`. Send it with the same params as the first page (`limit` may change); a page whose params differ is a 400 naming the param."
         }
       },
       "required": [
@@ -478,19 +449,19 @@ export const tools: readonly ToolDef[] = [
       "properties": {
         "signal": {
           "type": "string",
-          "description": "Custom signal slug (the signal name). A built-in name answers 404 — built-ins are read-only."
+          "description": "Custom signal slug (the signal name). A built-in name answers 404: built-ins are read-only."
         },
         "new_name": {
           "type": "string",
-          "description": "New slug — renames the signal and changes its API handle everywhere (same validation as create). Refused while other custom signals reference the current name."
+          "description": "New slug: renames the signal and changes its API handle everywhere (same validation as create). Refused while other custom signals reference the current name."
         },
         "expr": {
           "type": "string",
-          "description": "New SQL expression. Re-validated and re-inlined against your other custom signals. Same strict grammar as create: no `LIKE`/`ILIKE`, `CASE`, `::` casts or functions beyond `abs`/`coalesce`/`round`/`least`/`greatest`. The response echoes your expression as stored, not its expansion (a pre-2026-09-07 column spelling is stored under its current name and reported in `_meta.deprecated_signals`)."
+          "description": "New SQL expression. Re-validated and re-inlined against your other custom signals. Same strict grammar as create: no `LIKE`/`ILIKE`, `CASE`, `::` casts or functions beyond `abs`/`coalesce`/`round`/`least`/`greatest`. The response echoes your expression as stored, not its expansion (a pre-2026-09-07 signal spelling is stored under its current name and reported in `_meta.deprecated_signals`)."
         },
         "description": {
           "type": "string",
-          "description": "New description. Not derived from `expr` — change both if the prose describes a threshold you are moving."
+          "description": "New description. Not derived from `expr`, so change both if the prose describes a threshold you are moving."
         }
       },
       "required": [
@@ -519,7 +490,7 @@ export const tools: readonly ToolDef[] = [
       "properties": {
         "signal": {
           "type": "string",
-          "description": "Custom signal slug (the signal name). A built-in name answers 404 — built-ins are read-only."
+          "description": "Custom signal slug (the signal name). A built-in name answers 404: built-ins are read-only."
         },
         "force": {
           "type": "boolean",
@@ -556,15 +527,15 @@ export const tools: readonly ToolDef[] = [
         },
         "universe": {
           "type": "string",
-          "description": "Restrict to a system or user-owned universe. Unknown universes are a 404 `universe_not_found`."
+          "description": "Scope to a built-in universe (`top_10`, `top_100`) or one of your own, by id. An unknown one is a 400 `universe_not_found` naming it."
         },
         "select": {
           "type": "string",
-          "description": "What each delivered match carries. Omitted: the scan default row plus the signal. A list of signal names: exactly those, `ticker` always included."
+          "description": "What each delivered match carries. Omitted: the scan default row plus the signal. A list of signal names: exactly those, `ticker` always included. `*` and expressions are a 400: a delivery lists up to 100 matches, so name the signals."
         },
         "order": {
           "type": "string",
-          "description": "Signal each delivery's match lists are sorted by before the 100-result cap applies, so a truncated list is the deterministic top 100 rather than an arbitrary sample. Must be a real signal (validated at creation).",
+          "description": "Signal each delivery's match lists are sorted by before the 100-result cap applies, so a broad alert lists the same top 100 each time. Must be a real signal (validated at creation).",
           "default": "market_cap"
         },
         "dir": {
@@ -578,7 +549,7 @@ export const tools: readonly ToolDef[] = [
         },
         "channel": {
           "type": "string",
-          "description": "Delivery channel. `webhook` (POST to `target_url`), `discord` (embed to `discord_url`), `in_app` (dashboard only) or `mobile_push` (to `device_id`). Inferred when omitted: `webhook` if `target_url` is set, `discord` if `discord_url` is set, `mobile_push` if `device_id` is set, else `in_app`.",
+          "description": "Delivery channel: `webhook` (POST to `target_url`), `discord` (an embed at `discord_url`), `in_app` (the dashboard only) or `mobile_push` (to `device_id`). Inferred when omitted: `discord` if `discord_url` is set, else `mobile_push` if `device_id` is set, else `webhook` if `target_url` is set, else `in_app`. See Delivery channels.",
           "enum": [
             "webhook",
             "discord",
@@ -588,19 +559,19 @@ export const tools: readonly ToolDef[] = [
         },
         "target_url": {
           "type": "string",
-          "description": "Only with `channel=webhook`. https:// URL to POST when a ticker starts matching."
+          "description": "Only with `channel=webhook`. HTTPS URL each delivery is POSTed to."
         },
         "discord_url": {
           "type": "string",
-          "description": "Only with `channel=discord`. Discord incoming-webhook URL. Stored as a posting credential: the create response echoes it back under `channel_config`, but every later read (list, get, deliveries) strips it and sets `channel_config_present: true` instead."
+          "description": "Only with `channel=discord`. Discord incoming-webhook URL (`https://discord.com/api/webhooks/…`). Stored as a posting credential: the create response echoes it back under `channel_config`, but every later read (list, get, deliveries) strips it and sets `channel_config_present: true` instead."
         },
         "device_id": {
           "type": "string",
-          "description": "Only with `channel=mobile_push`. Device to notify, from `POST /v2/devices/register`. Unknown ids are a 404 `device_not_found`."
+          "description": "Only with `channel=mobile_push`. Device to notify, from `POST /v2/devices/register`. An unknown id is a 400 `device_not_found`."
         },
         "cadence": {
           "type": "string",
-          "description": "`realtime` (the default) is checked each time the data refreshes, about once a minute; `hourly` and `nyse_open` are checked on that schedule.",
+          "description": "How often to evaluate: `realtime` (the default) is checked each time the data refreshes, about once a minute; `hourly` and `nyse_open` are checked on that schedule.",
           "enum": [
             "realtime",
             "hourly",
@@ -609,7 +580,7 @@ export const tools: readonly ToolDef[] = [
         },
         "name": {
           "type": "string",
-          "description": "Human-readable label (up to 80 chars). Defaults to the predicate: `golden_cross`, or `rsi_14 < 30`."
+          "description": "Display name, up to 80 characters. Defaults to the condition: `golden_cross`, or `rsi_14 < 30`."
         }
       },
       "required": [
@@ -648,38 +619,24 @@ export const tools: readonly ToolDef[] = [
       "properties": {
         "search": {
           "type": "string",
-          "description": "Case-insensitive match on `ticker` or `name`, max 64 characters (longer is a 400). Results are ranked: an exact ticker match first, then symbols that start with the term, then name matches — alphabetical within each rank. The cursor carries the rank, so paging a search never repeats or skips."
+          "description": "Case-insensitive match on `ticker` or `name`, max 64 characters (longer is a 400). Results are ranked: an exact ticker match first, then symbols that start with the term, then symbols that contain it, then names that have it as a whole word, then names that contain it; alphabetical within each rank. The cursor carries the rank, so paging a search never repeats or skips."
         },
         "ticker": {
           "type": "string",
-          "description": "One symbol or a comma-separated list (up to 50; more is a 400): just those tickers' identity records, in the usual order. A symbol we don't track is simply absent. For everything about each one, put the list in the path of Get a ticker."
+          "description": "One symbol or a comma-separated list (up to 50; more is a 400): just those tickers' identity records, in the usual order. A symbol we don't track is absent from `results` and listed in `not_found`. For everything about each one, put the list in the path of Get a ticker."
         },
         "asset_class": {
           "type": "string",
-          "description": "Filter by asset class — `stocks`, `rates`, `crypto`, `fx` or a comma-separated list (the live classes today; validated for shape, not against a fixed list, so a well-formed class we don't track simply matches nothing — same contract as scan). Omit for every class. This is the class of INSTRUMENT, distinct from `asset_type` below (the instrument type within equities). Every result carries its `asset_class`, so a non-equity result identifies itself."
+          "description": "Filter by asset class: `stocks`, `rates`, `crypto`, `fx` or a comma-separated list (the live classes today; validated for shape, not against a fixed list, so a well-formed class outside these matches nothing). Omit for every class. This is the class of instrument, distinct from `asset_type` below (the instrument type within equities). Every result carries its `asset_class`, so a non-equity result identifies itself."
         },
         "asset_type": {
           "type": "string",
-          "description": "Filter by instrument type WITHIN equities (one or a comma list) — the stored `asset_type` value (`CS`, `ETF`, `ADRC`, `PFD`, `FUND`, `UNIT`, `SP`, `ETS`, `WARRANT`, `RIGHT`, `ETN`, `ETV`), matched case-insensitively. `equity` is a convenience value expanding to the equity-like set. This is NOT an asset class: `asset_type=crypto` is rejected — use `asset_class=crypto`.",
-          "enum": [
-            "CS",
-            "ETF",
-            "ADRC",
-            "PFD",
-            "FUND",
-            "UNIT",
-            "SP",
-            "ETS",
-            "WARRANT",
-            "RIGHT",
-            "ETN",
-            "ETV",
-            "equity"
-          ]
+          "description": "Filter by instrument type within equities (one or a comma list): the stored `asset_type` value (`CS`, `ETF`, `ADRC`, `PFD`, `FUND`, `UNIT`, `SP`, `ETS`, `WARRANT`, `RIGHT`, `ETN`, `ETV`), matched case-insensitively. `equity` is a convenience value expanding to the equity-like set. This is not an asset class: `asset_type=crypto` is a 400 (use `asset_class=crypto`). Values: CS, ETF, ADRC, PFD, FUND, UNIT, SP, ETS, WARRANT, RIGHT, ETN, ETV, equity.",
+          "pattern": "^(CS|ETF|ADRC|PFD|FUND|UNIT|SP|ETS|WARRANT|RIGHT|ETN|ETV|equity)(,(CS|ETF|ADRC|PFD|FUND|UNIT|SP|ETS|WARRANT|RIGHT|ETN|ETV|equity))*$"
         },
         "exchange": {
           "type": "string",
-          "description": "Filter by exchange name (one or a comma list) — the value results carry in their `exchange` field. MIC codes (`XNAS`, `XNYS`, `BATS`) are also accepted and match `exchange_mic`. A malformed value (non-letters, over 16 chars) is a 400."
+          "description": "Filter by exchange name (one or a comma list): the value results carry in their `exchange` field. MIC codes (`XNAS`, `XNYS`, `BATS`) are also accepted and match `exchange_mic`. A malformed value (non-letters, over 16 chars) is a 400."
         },
         "active": {
           "type": "boolean",
@@ -692,7 +649,7 @@ export const tools: readonly ToolDef[] = [
         },
         "cursor": {
           "type": "string",
-          "description": "Opaque cursor from the previous response's `next_cursor` field. Continues the walk from after that page. A cursor minted under `search` only resumes the same search."
+          "description": "The previous response's `next_cursor`. Send it with the same params as the first page (`limit` may change); a page whose params differ is a 400 naming the param."
         }
       }
     },
@@ -716,21 +673,21 @@ export const tools: readonly ToolDef[] = [
   },
   {
     "name": "tickerbot_get_ticker",
-    "description": "Returns everything about one ticker or a comma list of up to 50 in the path (a screen's matches, say): every signal each one carries, live or on any past date with `asof`. Pass a comma list of up to 50 symbols for a batch (`data` keyed by symbol plus `not_found`). Crypto is the X-prefixed pair (X:BTCUSD) — bare BTC/ETH are US-listed ETFs.",
+    "description": "Returns everything about one ticker or a comma list of up to 50 in the path (a screen's matches, say): every signal each one carries, live or on any past date with `asof`. A comma list returns `data` keyed by symbol plus `not_found`. Crypto is the X-prefixed pair (X:BTCUSD); bare BTC/ETH are US-listed ETFs.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "ticker": {
           "type": "string",
-          "description": "One symbol, or a comma-separated list of up to 50 for a batch response keyed by symbol. Case-insensitive. Equities are bare symbols (`NVDA`); every other class carries a prefix — rates (`R:SOFR`), crypto (`X:BTCUSD`), fx (`X:EURUSD`). Bare `BTC`/`ETH` are US-listed ETFs, not spot crypto. See Tickers."
+          "description": "One symbol, or a comma-separated list of up to 50 for a response keyed by symbol. Case-insensitive. Equities are bare symbols (`NVDA`); every other class carries a prefix: rates (`R:SOFR`), crypto (`X:BTCUSD`), fx (`X:EURUSD`). Bare `BTC`/`ETH` are US-listed ETFs, not spot crypto. See Tickers."
         },
         "asof": {
           "type": "string",
-          "description": "Target moment as `YYYY-MM-DD` (that day's close) or an ISO timestamp (that intraday moment; daily-only signals then carry the previous session's close, never that day's) — the same read as it stood then, unlimited depth. Full contract under As of a past date."
+          "description": "Target moment as `YYYY-MM-DD` (that day's close) or an ISO timestamp (that intraday moment; daily-only signals then carry the previous session's close, never that day's): the same read as it stood then, unlimited depth. Full contract under As of a past date."
         },
         "grain": {
           "type": "string",
-          "description": "Only with `asof`. Grain the past state is read at: `1m`, `1h`, `1d` or `auto` (default). `auto` blends: each signal comes from its freshest grain at or before the instant (minute, then hourly, then the last closed daily session), so nothing is refused for grain and no ticker is dropped; `_meta.blended` and `_meta.grains_present` say what contributed. Pin a grain for the fastest response: one grain is read instead of three. On this single-ticker read a pinned grain returns the signals that grain stores (`rsi_14`, fundamentals and valuation ratios are `1d`-only, so they are absent under `1h`/`1m` rather than refused), and a grain with no data for the ticker within its window (14 days for `1d`, 5 for `1h`/`1m`) is a `404 interval_unavailable`. A live read with `grain` is a 400.",
+          "description": "Only with `asof`. Grain the past state is read at: `1m`, `1h`, `1d` or `auto` (default). `auto` blends: each signal comes from its freshest grain at or before the instant (minute, then hourly, then the last closed daily session), so nothing is refused for grain and no ticker is dropped; `_meta.blended` and `_meta.grains_present` say what contributed. Pin a grain for the fastest response: one grain is read instead of three. A signal in `select` that the pinned grain does not store is a `400 interval_unavailable` naming the grains that carry it (`rsi_14`, fundamentals and valuation ratios are `1d`-only). Without `select`, the row carries the signals the pinned grain stores, and `_meta.signals_not_stored_at_grain` names the rest. A grain with no data for the ticker within its window (14 days for `1d`, 5 for `1h`/`1m`) is a `404 interval_unavailable`. `1m` and `1h` need a timestamp `asof`; with a bare date they are a `400 interval_unavailable`. A live read with `grain` is a 400.",
           "enum": [
             "1m",
             "1h",
@@ -741,7 +698,7 @@ export const tools: readonly ToolDef[] = [
         },
         "select": {
           "type": "string",
-          "description": "Comma-separated signals to return: each row is `ticker` plus exactly these. Omit it for the full row (every signal the ticker carries). An unknown signal is a 400."
+          "description": "Comma-separated signals to return: each row is `ticker` plus exactly these. Omit it, or send `*`, for the full row: every signal the ticker carries, or on an as-of read every signal the read's grain stores. An unknown signal is a 400, beside `*` too."
         }
       },
       "required": [
@@ -767,29 +724,29 @@ export const tools: readonly ToolDef[] = [
   },
   {
     "name": "tickerbot_get_history",
-    "description": "Returns the signals of one ticker or a comma list of up to 50 in the path (a screen's matches, say) over time, all-time: up to 25 signals in `select`, every ticker on one shared grid. `ticker` takes one symbol or a comma list of up to 50 (a scan's matches) on one aligned grid. `data` is one flat row per grain step: the rows themselves for one symbol, keyed by symbol for a list. Paged backward: pass `next_cursor` back as `cursor`. For when a yes/no signal flipped, use tickerbot_list_events with kind=signal.",
+    "description": "Returns the signals of one ticker or a comma list of up to 50 in the path (a screen's matches, say) over time, all-time: up to 25 signals in `select`, or `*` for every signal the grain stores, every ticker on one shared grid. `series` is keyed by symbol, one flat row per grain step. Paged backward: pass `next_cursor` back as `cursor` with the same params. For when a yes/no signal flipped, use tickerbot_query_events with kind=signal.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "ticker": {
           "type": "string",
-          "description": "Ticker symbol, or a comma-separated list (up to 50) on one aligned grid. A page holds at most 25,000 points in all (tickers × `limit`), so 50 tickers page at up to 500 points each."
+          "description": "One symbol, or a comma-separated list of up to 50 for a response keyed by symbol, on one aligned grid. A page holds at most 25,000 points in all (tickers × `limit`), so 50 tickers page at up to 500 points each. Case-insensitive. Equities are bare symbols (`NVDA`); every other class carries a prefix: rates (`R:SOFR`), crypto (`X:BTCUSD`), fx (`X:EURUSD`). Bare `BTC`/`ETH` are US-listed ETFs, not spot crypto. See Tickers."
         },
         "from": {
           "type": "string",
-          "description": "Window start, `YYYY-MM-DD` or ISO: a bare date starts at the beginning of that day, a timestamp is included. At `1q` and `1y` it bounds the fiscal period end. Intraday requests default to a recent window (`1m`: 7 days, `1h`: 60 days) — the cursor keeps walking further back window-by-window, or pass `from` to widen it up front."
+          "description": "Window start, `YYYY-MM-DD` or ISO: a bare date starts at the beginning of that day, a timestamp is included. At `1q` and `1y` it bounds the fiscal period end. Intraday requests default to a recent window (`1m`: 7 days, `1h`: 60 days); the cursor keeps walking further back window-by-window, or pass `from` to widen it up front."
         },
         "to": {
           "type": "string",
-          "description": "Window end, `YYYY-MM-DD` or ISO. A bare date covers that whole day. A timestamp is included until 2027-01-12 and exclusive from then, as everywhere else (Deprecations). At `1m`/`1h` a bare date on `from` or `to` is the ET calendar day for stocks and ETFs, and the UTC day when the request includes crypto or FX. See Time windows."
+          "description": "Window end, `YYYY-MM-DD` or ISO. A bare date covers that whole day. A timestamp is included until 2027-01-12 and exclusive from then, as everywhere else (Deprecations). At `1m`/`1h` a bare date on `from` or `to` is each ticker's market day: the ET calendar day for stocks and ETFs, the UTC day for crypto, FX and rates, ticker by ticker in a mixed list. See Time windows."
         },
         "asof": {
           "type": "string",
-          "description": "Point-in-time read: ONE result per ticker (the state at that instant) rather than a range. `YYYY-MM-DD` or a full ISO timestamp, the same meaning `asof` carries on `/v2/tickers/{ticker}`, `/v2/scan` and `/v2/signals`. Cannot be combined with `from`/`to` or `cursor` (400) — a point and a window are contradictory, and `limit` has no meaning under it. It also resolves WHICH COMPANY held the symbol at that instant: a ticker that changed hands returns the state of whoever traded it then, so `/v2/tickers/SHLD/history?asof=2010-06-30` returns Sears Holdings' price and `asof=2026-01-01` returns the Global X defense ETF. Returns the most recent result at or before the instant, so a date inside a trading gap gives the last result before it; on the `1d` and `1w` grids a timestamp returns the previous session's result, never that day's close. Also: `next_cursor` is always `null` (every requested ticker is on the one page). A ticker with no data on the grid at or before the instant (outside the minute tier, say) comes back as an empty array with `_meta.coverage[ticker].rows: 0`; a 404 means only that we do not track the symbol. A bare date on the `1m`/`1h` grid is accepted and means the last result of that day: the ET calendar day for stocks and ETFs, the UTC day for crypto and FX (the state reads 400 that combination; this grid read does not). The look-back is the grid's window: `1d` walks back without limit, `1h` 60 days and `1m` 7 days before the instant. At `grain=1q` a quarter is visible from its `available_at` — when the market could first trade on it: 9:30 AM ET on the report date for a pre-market earnings release, else 9:30 AM ET of the next session; statements the session after filing — and a bare date means that day's 4 PM ET close, so you get the latest quarter that was public knowledge at the instant, with restatements after it excluded: `/v2/tickers/AAPL/history?grain=1q&asof=2026-07-30` returns 2026-Q1, `asof=2026-07-31T13:30:00Z` 2026-Q2 (the June quarter was reported after the close on 2026-07-30). See availability. At `grain=1y` a fiscal year is visible from its `available_at` — 9:30 AM ET of the first session after the ORIGINAL annual report was filed — and a bare date means that day's 4 PM ET close: `/v2/tickers/AAPL/history?grain=1y&asof=2025-10-31` returns fiscal 2024, `asof=2025-11-03` fiscal 2025 (the 10-K was filed after the close on Friday 2025-10-31). Response time: under 1.5 s cold, under 0.6 s warm."
+          "description": "Point-in-time read: one result per ticker (the state at that instant) rather than a range. `YYYY-MM-DD` or a full ISO timestamp, the same meaning `asof` carries on `/v2/tickers/{ticker}`, `/v2/scan` and `/v2/signals/{signal}`. Combined with `from`/`to` or `cursor` it is a 400 (a point and a window contradict), and `limit` has no meaning under it. It also resolves which company held the symbol at that instant: a ticker that changed hands returns the state of whoever traded it then, so `/v2/tickers/SHLD/history?asof=2010-06-30` returns Sears Holdings' price and `asof=2026-01-01` returns the Global X defense ETF. Returns the most recent result at or before the instant, so a date inside a trading gap gives the last result before it; on the `1d` and `1w` grids a timestamp returns the previous session's result, never that day's close. Also: `next_cursor` is always `null` (every requested ticker is on the one page). A ticker with no data on the grid at or before the instant (outside the minute tier, say) comes back as an empty array with `_meta.coverage[ticker].rows: 0`; a 404 means only that we do not track the symbol. A bare date on the `1m`/`1h` grid is accepted and means the last result of that day: the ET calendar day for stocks and ETFs, the UTC day for crypto, FX and rates (the state reads 400 that combination; this grid read does not). The look-back is the grid's window: `1d` walks back without limit, `1h` 60 days and `1m` 7 days before the instant. At `grain=1q` a quarter is visible from its `available_at`, when the market could first trade on it: 9:30 AM ET on the report date for a pre-market earnings release, else 9:30 AM ET of the next session; statements the session after filing. A bare date means that day's 4 PM ET close, so you get the latest quarter that was public knowledge at the instant, with restatements after it excluded: `/v2/tickers/AAPL/history?grain=1q&asof=2026-07-30` returns 2026-Q1, `asof=2026-07-31T13:30:00Z` 2026-Q2 (the June quarter was reported after the close on 2026-07-30). See availability. At `grain=1y` a fiscal year is visible from its `available_at`: 9:30 AM ET of the first session after the original annual report was filed. A bare date means that day's 4 PM ET close: `/v2/tickers/AAPL/history?grain=1y&asof=2025-10-31` returns fiscal 2024, `asof=2025-11-03` fiscal 2025 (the 10-K was filed after the close on Friday 2025-10-31). Response time: under 1.5 s cold, under 0.6 s warm."
         },
         "grain": {
           "type": "string",
-          "description": "Grid granularity. `1w` resamples the daily tier weekly (Monday-keyed); `1q` is the fiscal-quarter grid; `1y` is the fiscal-year grid of annual statements. This is the grid, not a state tier: there is no `auto` here and nothing blends — under `asof` you get the last result on this grid, and a signal the grid does not carry is a `400`.",
+          "description": "Grid granularity. `1w` resamples the daily grain weekly (Monday-keyed); `1q` is the fiscal-quarter grid; `1y` is the fiscal-year grid of annual statements. This is the grid: there is no `auto` here and nothing blends; under `asof` you get the last result on this grid, and a signal the grid does not carry is a `400`.",
           "enum": [
             "1m",
             "1h",
@@ -802,16 +759,16 @@ export const tools: readonly ToolDef[] = [
         },
         "select": {
           "type": "string",
-          "description": "Up to 25 signals: built-in signals, your custom signals and OHLCV names, freely mixed. Omitted → the ticker-history default set (price, change_1d_pct, relative_volume, market_cap), intersected with what the grain carries. At `1q`, `select` is required and quarterly-only; at `1y`, required and annual-only (the list is under Notes)."
+          "description": "Up to 25 signals: built-in signals, your custom signals and OHLCV names, freely mixed. `*` is every signal the grain stores (at `1q` and `1y`, every quarterly or annual field), with no 25-signal cap; its page holds at most 1,000 points (tickers × `limit`), see `limit`. `*` returns the same rows as a named list of stored signals, and its `vwap` is the stored value (a named `vwap` is read from the bars). A name sent beside `*` adds nothing, and an unknown one is a 400. Omitted → the ticker-history default set (price, change_1d_pct, relative_volume, market_cap), intersected with what the grain carries. At `1q`, `select` is required and quarterly-only; at `1y`, required and annual-only (the list is under Notes)."
         },
         "limit": {
           "type": "integer",
-          "description": "Grid steps per page. Max 1000 — an over-cap `limit` is clamped to 1000 (house convention, `limit=10000` means \"max\"). Separately, a page holds at most 25,000 points in all: tickers × `limit` over 25,000 is a 400 (50 tickers take `limit` up to 500; 25 take the full 1,000).",
+          "description": "Grid steps per page. Max 1000; an over-cap `limit` is clamped to 1000. Separately, a page holds at most 25,000 points in all: tickers × `limit` over 25,000 is a 400 (50 tickers take `limit` up to 500; 25 take the full 1,000). With `select=*` the page holds at most 1,000 points: over it, an explicit `limit` is a 400, and the default is lowered to fit (5 tickers get 200).",
           "default": 252
         },
         "cursor": {
           "type": "string",
-          "description": "Continue paging back: the previous response's `next_cursor`, unchanged, with the same tickers and parameters. It carries each ticker's own position, so every ticker continues from its own oldest row: nothing is skipped or repeated, even when the tickers trade on different calendars (a stock and a crypto pair)."
+          "description": "Continue paging back: the previous response's `next_cursor`, unchanged. Send it with the same params as the first page (`limit` may change); a page whose params differ is a 400 naming the param. On `1m` to `1w` it carries each ticker's own position, so every ticker continues from its own oldest row: nothing is skipped or repeated, even when the tickers trade on different calendars (a stock and a crypto pair). On `1q`/`1y` it carries the shared fiscal label, so every ticker continues from the same period."
         }
       },
       "required": [
@@ -832,14 +789,11 @@ export const tools: readonly ToolDef[] = [
         "cursor": "query"
       },
       "accepts": {
-        "columns": "query",
         "fields": "query",
+        "columns": "query",
         "interval": "query",
         "as_of": "query",
         "transitions_only": "query"
-      },
-      "fixedQuery": {
-        "api_version": "2027-01-12"
       }
     }
   },
@@ -851,7 +805,7 @@ export const tools: readonly ToolDef[] = [
       "properties": {
         "ticker": {
           "type": "string",
-          "description": "Case-insensitive. Equities are bare symbols (`NVDA`); every other class carries a prefix — rates (`R:SOFR`), crypto (`X:BTCUSD`), fx (`X:EURUSD`). Bare `BTC`/`ETH` are US-listed ETFs, not spot crypto. See Tickers."
+          "description": "One ticker. For several, use Subscribe to a scan with `q=\"ticker IN ('NVDA','AAPL') AND (…)\"`. Case-insensitive. Equities are bare symbols (`NVDA`); every other class carries a prefix: rates (`R:SOFR`), crypto (`X:BTCUSD`), fx (`X:EURUSD`). Bare `BTC`/`ETH` are US-listed ETFs, not spot crypto. See Tickers."
         },
         "q": {
           "type": "string",
@@ -859,11 +813,11 @@ export const tools: readonly ToolDef[] = [
         },
         "select": {
           "type": "string",
-          "description": "What each delivery carries. Omitted: the scan default row (ticker, name, asset_class, asset_type, price, change_1d_pct, gap_pct, relative_volume, market_cap) plus every signal used in `q`. A list of signal names: exactly those, `ticker` always included. Each must be a real signal; unknown ones are rejected at creation."
+          "description": "What each delivery carries. Omitted: the scan default row (ticker, name, asset_class, asset_type, price, change_1d_pct, gap_pct, relative_volume, market_cap) plus every signal used in `q`. A list of signal names: exactly those, `ticker` always included. Each must be a real signal; unknown ones are rejected at creation. `*` and expressions are a 400: a delivery lists up to 100 matches, so name the signals."
         },
         "channel": {
           "type": "string",
-          "description": "Delivery channel. `webhook` (POST to `target_url`), `discord` (post an embed to `discord_url`), `in_app` (dashboard only) or `mobile_push` (notify a phone signed in to the Tickerbot mobile app at `device_id`). Inferred when omitted: `webhook` if `target_url` is set, `discord` if `discord_url` is set, `mobile_push` if `device_id` is set, else `in_app`. See Delivery channels.",
+          "description": "Delivery channel: `webhook` (POST to `target_url`), `discord` (an embed at `discord_url`), `in_app` (the dashboard only) or `mobile_push` (to `device_id`). Inferred when omitted: `discord` if `discord_url` is set, else `mobile_push` if `device_id` is set, else `webhook` if `target_url` is set, else `in_app`. See Delivery channels.",
           "enum": [
             "webhook",
             "discord",
@@ -873,7 +827,7 @@ export const tools: readonly ToolDef[] = [
         },
         "target_url": {
           "type": "string",
-          "description": "Only with `channel=webhook`. https:// URL to POST when the condition fires."
+          "description": "Only with `channel=webhook`. HTTPS URL each delivery is POSTed to."
         },
         "discord_url": {
           "type": "string",
@@ -881,11 +835,11 @@ export const tools: readonly ToolDef[] = [
         },
         "device_id": {
           "type": "string",
-          "description": "Only with `channel=mobile_push`. Device to notify, from `POST /v2/devices/register`. Unknown ids are a 404 `device_not_found`."
+          "description": "Only with `channel=mobile_push`. Device to notify, from `POST /v2/devices/register`. An unknown id is a 400 `device_not_found`."
         },
         "cadence": {
           "type": "string",
-          "description": "How often to evaluate. `realtime` (the default) is checked each time the data refreshes, about once a minute; `hourly` and `nyse_open` are checked on that schedule.",
+          "description": "How often to evaluate: `realtime` (the default) is checked each time the data refreshes, about once a minute; `hourly` and `nyse_open` are checked on that schedule.",
           "enum": [
             "realtime",
             "hourly",
@@ -894,7 +848,7 @@ export const tools: readonly ToolDef[] = [
         },
         "name": {
           "type": "string",
-          "description": "Human-readable label (up to 80 chars). Defaults to `<TICKER>: <query>`."
+          "description": "Display name, up to 80 characters. Defaults to `<TICKER>: ` plus the first 40 characters of `q`."
         }
       },
       "required": [
@@ -933,11 +887,11 @@ export const tools: readonly ToolDef[] = [
       "properties": {
         "ticker": {
           "type": "string",
-          "description": "Ticker symbol, or a comma-separated list (up to 50) for a bulk response keyed by symbol."
+          "description": "One symbol, or a comma-separated list of up to 50 for a response keyed by symbol. Case-insensitive. Equities are bare symbols (`NVDA`); every other class carries a prefix: rates (`R:SOFR`), crypto (`X:BTCUSD`), fx (`X:EURUSD`). Bare `BTC`/`ETH` are US-listed ETFs, not spot crypto. See Tickers."
         },
         "interval": {
           "type": "string",
-          "description": "Bar interval. `2h`/`4h` roll up hourly bars; `1w`/`1mo` roll up daily bars into calendar weeks (Monday start) and months — the bar's `t` is the bucket start (UTC), and with `asof` the last bucket is the week/month to date.",
+          "description": "Bar interval. `2h`/`4h` roll up hourly bars; `1w`/`1mo` roll up daily bars into calendar weeks (Monday start) and months; the bar's `t` is the bucket start (UTC), and with `asof` the last bucket is the week/month to date.",
           "enum": [
             "1s",
             "1m",
@@ -954,23 +908,23 @@ export const tools: readonly ToolDef[] = [
         },
         "from": {
           "type": "string",
-          "description": "Window start: `YYYY-MM-DD`, ISO timestamp or epoch-ms. A bare date starts at the beginning of that day; a timestamp is included. Combines with `to` for an explicit window; page within it using `cursor`. Mutually exclusive with `asof` (400). See Time windows."
+          "description": "Window start: `YYYY-MM-DD`, ISO timestamp or epoch milliseconds (11 to 13 digits). A bare date starts at the beginning of that day; a timestamp is included. Combines with `to` for an explicit window; page within it using `cursor`. Mutually exclusive with `asof` (400). See Time windows."
         },
         "to": {
           "type": "string",
-          "description": "Window end: `YYYY-MM-DD`, ISO timestamp or epoch-ms. A bare date covers that whole day. A timestamp is included until 2027-01-12 (the newest bar returned is at or before it) and exclusive from then, as everywhere else (Deprecations). On sub-daily intervals a bare date on `from` or `to` is the ET calendar day for stocks and ETFs (the whole 04:00-20:00 ET session) and the UTC day for crypto and FX. Mutually exclusive with `asof` (400). See Time windows."
+          "description": "Window end: `YYYY-MM-DD`, ISO timestamp or epoch milliseconds (11 to 13 digits). A bare date covers that whole day. A timestamp is included until 2027-01-12 (the newest bar returned is at or before it) and exclusive from then, as everywhere else (Deprecations). On sub-daily intervals a bare date on `from` or `to` is the ET calendar day for stocks and ETFs (the whole 04:00-20:00 ET session) and the UTC day for crypto, FX and rates. Mutually exclusive with `asof` (400). See Time windows."
         },
         "asof": {
           "type": "string",
-          "description": "Point-in-time: the most recent bar whose period had closed at or before that moment. A bare `YYYY-MM-DD` means that day's close. A full timestamp means the last FINISHED bar — at 10:00 ET on a Wednesday the day's close has not happened, so `1d` returns Tuesday's bar. A bare date on an intraday grid (`1m`, `1h`, …) is accepted and means the last bar of that day: the ET calendar day for stocks and ETFs (through the 19:59 ET bar), the UTC day for crypto and FX. Returns one bar unless you also pass `limit`, which gives the last `limit` closed bars; follow `next_cursor` with the same parameters to keep paging back: the cursor and `asof` both bound the page, so no bar after the instant is ever served and every page stays on the company that held the symbol at the instant. Unlimited depth. Response time: under 1.5 s cold, under 0.6 s warm."
+          "description": "Point-in-time: the most recent bar whose period had closed at or before that moment. A bare `YYYY-MM-DD` means that day's close. A full timestamp means the last finished bar: at 10:00 ET on a Wednesday the day's close has not happened, so `1d` returns Tuesday's bar. A bare date on an intraday grid (`1m`, `1h`, …) is accepted and means the last bar of that day: the ET calendar day for stocks and ETFs (through the 19:59 ET bar), the UTC day for crypto, FX and rates. Returns one bar unless you also pass `limit`, which gives the last `limit` closed bars; follow `next_cursor` with the same parameters to keep paging back: the cursor and `asof` both bound the page, so no bar after the instant is ever served and every page stays on the company that held the symbol at the instant. Unlimited depth. Response time: under 1.5 s cold, under 0.6 s warm."
         },
         "adjusted": {
           "type": "boolean",
-          "description": "Default `true`: prices are split-adjusted — restated after each later split, as the tape is, so a series is continuous across a split. `false` returns the price as it printed that day (a name that later did a 1:10 reverse split reads `21.4` adjusted and `2.14` on the tape), which is what a broker fill or a chart from that time shows. Volume scales the other way."
+          "description": "Default `true`: prices are split-adjusted (restated after each later split, as the tape is), so a series is continuous across a split. `false` returns the price as it printed that day (a name that later did a 1:10 reverse split reads `21.4` adjusted and `2.14` on the tape), which is what a broker fill or a chart from that time shows. Volume scales the other way."
         },
         "session": {
           "type": "string",
-          "description": "Sub-hour intervals only. `all` (default) includes pre- and post-market bars. `regular` keeps bars whose start is in 09:30–16:00 ET (DST-aware). Why you might want it: the vendor buckets trades by SIP report time, and late-reported off-exchange (Form T) prints on thin names can land 20 min to hours late in a pre-market minute — a `$1.70` print at 08:13 ET on a `$3.85` stock. Daily high/low are untouched by those. `limit` counts after the filter; paging still works.",
+          "description": "Sub-hour intervals only. `all` (default) includes pre- and post-market bars. `regular` keeps bars whose start is in 09:30–16:00 ET (DST-aware). Why you might want it: the vendor buckets trades by SIP report time, and late-reported off-exchange (Form T) prints on thin names can land 20 min to hours late in a pre-market minute (a `$1.70` print at 08:13 ET on a `$3.85` stock). Daily high/low are untouched by those. `limit` counts after the filter; paging still works.",
           "enum": [
             "all",
             "regular"
@@ -979,12 +933,12 @@ export const tools: readonly ToolDef[] = [
         },
         "limit": {
           "type": "integer",
-          "description": "Most-recent N bars. Max 1000 — an over-cap value is clamped, not an error. On a comma list the cap is per symbol: each symbol returns its newest `limit` bars in the window.",
+          "description": "Most-recent N bars. Max 1000; an over-cap value is clamped, not an error. On a comma list the cap is per symbol: each symbol returns its newest `limit` bars in the window.",
           "default": 100
         },
         "cursor": {
           "type": "string",
-          "description": "Continue paging back: the previous response's `next_cursor`, unchanged, with the same symbols and parameters. On a comma list it carries each symbol's own position, so every symbol continues from its own oldest bar. A blank `cursor=` counts as absent."
+          "description": "Continue paging back: the previous response's `next_cursor`, unchanged, with the same parameters. On a comma list, `next_cursor` is an object of each symbol's oldest-bar time; to page one symbol further, send its value as `cursor` with that symbol alone. From 2027-01-12 a comma list's `next_cursor` is one opaque string to pass back as `cursor` with the same symbols (Deprecations). A blank `cursor=` counts as absent."
         }
       },
       "required": [
@@ -1009,21 +963,18 @@ export const tools: readonly ToolDef[] = [
       "accepts": {
         "as_of": "query",
         "before": "query"
-      },
-      "fixedQuery": {
-        "api_version": "2027-01-12"
       }
     }
   },
   {
     "name": "tickerbot_get_ticker_coverage",
-    "description": "Reports what we hold for one ticker or a comma list of up to 50, and how far back, so an empty result is never ambiguous. Ask this before treating a gap in bars or history as an outage. An absent `1m` span is not a gap — sub-hour bars load on the first request for a symbol.",
+    "description": "Reports what we hold for one ticker or a comma list of up to 50, and how far back, so an empty result is never ambiguous. Ask this before treating a gap in bars or history as an outage. An absent `1m` span is not a gap: sub-hour bars load on the first request for a symbol.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "ticker": {
           "type": "string",
-          "description": "One symbol, or a comma-separated list of up to 50 for a response keyed by symbol. Case-insensitive. Equities are bare symbols (`NVDA`); every other class carries a prefix — rates (`R:SOFR`), crypto (`X:BTCUSD`), fx (`X:EURUSD`). Bare `BTC`/`ETH` are US-listed ETFs, not spot crypto. See Tickers."
+          "description": "One symbol, or a comma-separated list of up to 50 for a response keyed by symbol. Case-insensitive. Equities are bare symbols (`NVDA`); every other class carries a prefix: rates (`R:SOFR`), crypto (`X:BTCUSD`), fx (`X:EURUSD`). Bare `BTC`/`ETH` are US-listed ETFs, not spot crypto. See Tickers."
         }
       },
       "required": [
@@ -1046,13 +997,13 @@ export const tools: readonly ToolDef[] = [
   },
   {
     "name": "tickerbot_get_etf_holdings",
-    "description": "Returns an ETF's constituents and their weights, heaviest first, and its sector weights, for one ETF or a comma list of up to 50. Returns `data.holdings` and the sector mix `data.sectors`. When the ticker is not an ETF, `is_etf` is false and both are empty; `is_etf: true` with zero holdings means a real ETF whose holdings are not ingested yet. The reverse lookup (\"which ETFs hold NVDA\") is the `etf_holders` signal on tickerbot_get_ticker, or a scan: `'SMH' = ANY(etf_holders)`.",
+    "description": "Returns an ETF's constituents and their weights, heaviest first, and its sector weights, for one ETF or a comma list of up to 50. Returns `data.holdings` and the sector mix `data.sectors`. When the ticker is not an ETF, `data.is_etf` is false and both are empty; `data.is_etf: true` with zero holdings means a real ETF whose holdings are not ingested yet. The reverse lookup (\"which ETFs hold NVDA\") is the `etf_holders` signal on tickerbot_get_ticker, or a scan: `'SMH' = ANY(etf_holders)`.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "ticker": {
           "type": "string",
-          "description": "ETF symbol, or a comma-separated list of up to 50 for a response keyed by symbol. Case-insensitive."
+          "description": "ETF symbol, or a comma-separated list of up to 50 for a response keyed by symbol. Case-insensitive. Equities are bare symbols (`NVDA`); every other class carries a prefix: rates (`R:SOFR`), crypto (`X:BTCUSD`), fx (`X:EURUSD`). Bare `BTC`/`ETH` are US-listed ETFs, not spot crypto. See Tickers."
         },
         "limit": {
           "type": "integer",
@@ -1061,7 +1012,7 @@ export const tools: readonly ToolDef[] = [
         },
         "cursor": {
           "type": "string",
-          "description": "Continue paging: the previous response's `next_cursor`, unchanged, with the same symbols and `limit`. On a comma list it carries each ETF's own position, so every ETF continues from its own last holding; a finished one returns an empty `holdings`."
+          "description": "Continue paging: the previous response's `next_cursor`, unchanged. Send it with the same params as the first page (`limit` may change); a page whose params differ is a 400 naming the param. On a comma list it carries each ETF's own position, so every ETF continues from its own last holding; a finished one returns an empty `holdings`."
         }
       },
       "required": [
@@ -1085,25 +1036,15 @@ export const tools: readonly ToolDef[] = [
     }
   },
   {
-    "name": "tickerbot_list_events",
-    "description": "Queries events with SQL across every ticker or a screen's matches: earnings, dividends, splits, filings, insider trades and analyst actions, plus opt-in estimate revisions, news and signal firings. Requires at least one bound: a ticker scope (ticker/universe) or a time window (from/to) — `q` alone is not a bound. With one `kind`, its payload fields are bare names in `q`/`select`/`group_by` (`q: firm ILIKE 'Morgan Stanley'`, `q: relevance >= 0.8` on news); tickerbot_list_event_kinds lists them. `join: state` adds the ticker's signals as of each event. Every result has a stable `id`: use it to drop duplicates. `kind: signal` takes custom signals too.",
+    "name": "tickerbot_query_events",
+    "description": "Queries events with SQL across every ticker or a screen's matches: earnings, dividends, splits, filings, insider trades and analyst actions, plus opt-in estimate revisions, news and signal firings. Requires at least one bound: a ticker scope (ticker/universe) or a time window (from/to); `q` alone is not a bound. With one `kind`, its payload fields are bare names in `q`/`select`/`group_by` (`q: firm ILIKE 'Morgan Stanley'`, `q: relevance >= 0.8` on news); tickerbot_list_event_kinds lists them. `join: state` adds the ticker's signals as of each event. Every result has a stable `id`: use it to drop duplicates. `kind: signal` takes custom signals too.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "kind": {
           "type": "string",
-          "description": "Comma list of kinds. Leave it out for earnings, dividend, split, filing, insider and analyst. News, signal and estimate_revision come back only when named. List event kinds lists each kind, its fields and its filters.",
-          "enum": [
-            "dividend",
-            "split",
-            "insider",
-            "analyst",
-            "earnings",
-            "filing",
-            "signal",
-            "news",
-            "estimate_revision"
-          ]
+          "description": "Comma list of kinds. Leave it out for earnings, dividend, split, filing, insider and analyst. News, signal and estimate_revision come back only when named. List event kinds lists each kind, its fields and its filters. Values: dividend, split, insider, analyst, earnings, filing, signal, news, estimate_revision.",
+          "pattern": "^(dividend|split|insider|analyst|earnings|filing|signal|news|estimate_revision)(,(dividend|split|insider|analyst|earnings|filing|signal|news|estimate_revision))*$"
         },
         "ticker": {
           "type": "string",
@@ -1111,19 +1052,19 @@ export const tools: readonly ToolDef[] = [
         },
         "universe": {
           "type": "string",
-          "description": "Universe slug (`top_10`, `top_100` or one of yours) to scope the stream. Not combinable with `ticker`."
+          "description": "Scope to a built-in universe (`top_10`, `top_100`) or one of your own, by id. An unknown one answers 200 with no results and its id in `not_found`. Not combinable with `ticker`."
         },
         "from": {
           "type": "string",
-          "description": "Events at/after this instant — strict ISO: `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM[:SS]Z`. A bare `YYYY-MM-DD` means from the start of that day. For news, analyst ratings and estimate revisions the day is the ET calendar day (a story at 21:00 ET on Nov 2 is Nov 2); dated kinds use their own dates."
+          "description": "Events at or after this instant, in strict ISO: `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM[:SS]Z`. A bare `YYYY-MM-DD` means from the start of that day. For news, analyst ratings and estimate revisions the day is the ET calendar day (a story at 21:00 ET on Nov 2 is Nov 2); dated kinds use their own dates. For `signal`, the ticker's home-market day: ET for stocks and ETFs, UTC for crypto, FX and rates."
         },
         "to": {
           "type": "string",
-          "description": "Window end — same strict ISO subset. A bare `YYYY-MM-DD` means through the end of that day; a timestamp is exclusive (events strictly before it). For news, analyst ratings and estimate revisions the day is the ET calendar day; dated kinds use their own dates."
+          "description": "Window end, in the same strict ISO subset. A bare `YYYY-MM-DD` means through the end of that day; a timestamp is exclusive (events strictly before it). For news, analyst ratings and estimate revisions the day is the ET calendar day; dated kinds use their own dates. For `signal`, the ticker's home-market day: ET for stocks and ETFs, UTC for crypto, FX and rates."
         },
         "signal": {
           "type": "string",
-          "description": "Only with `kind=signal`. One signal or a comma list of up to 5: built-in yes/no signals or your custom signals. Required with `q` or `join=state`. See Signal firings."
+          "description": "Only with `kind=signal`. One signal or a comma list of up to 5: built-in yes/no signals or your custom signals. Required with `q` or `join=state`. An unknown name filters nothing in and is listed in `not_found` (every name unknown: no signal events). See Signal firings."
         },
         "transition": {
           "type": "string",
@@ -1143,14 +1084,14 @@ export const tools: readonly ToolDef[] = [
         },
         "join": {
           "type": "string",
-          "description": "Set to `state` to use the ticker's signals in `q`, `select`, `group_by` and `having`, read as of each event's timestamp at the grain `grain` picks. On the daily grain an event on day D reads D-1's row, never D's close. A signal and a payload field with the same name (`price` on insider and signal events, `cik` on filing) resolve to the signal; spell the field `payload->>'price'`.",
+          "description": "Set to `state` to use the ticker's signals in `q`, `select`, `group_by` and `having`, read as of each event's timestamp at the grain `grain` picks. On the daily grain an event on day D reads D-1's row, never D's close. A signal and a payload field with the same name (`price` on insider and signal events, `cik` on filing) resolve to the signal; spell the field `payload->>'price'`. Needs `q`, `group_by` or a ticker signal in `select`.",
           "enum": [
             "state"
           ]
         },
         "grain": {
           "type": "string",
-          "description": "With `kind=signal`, the grain the flips are read at: `1m`, `1h` or `1d` (default: the coarsest grain the signal is stored at). With `join=state`, the grain the ticker's signals are read at: `auto` (default) blends hourly and the last closed daily session per event; see as of a past date.",
+          "description": "Only with `kind=signal` or `join=state`. With `kind=signal`, the grain the flips are read at: `1m`, `1h` or `1d`, or `auto` (the default), the coarsest grain the signal is stored at. With `join=state`, the grain the ticker's signals are read at: `auto` (default) blends hourly and the last closed daily session per event; see as of a past date.",
           "enum": [
             "1m",
             "1h",
@@ -1161,11 +1102,11 @@ export const tools: readonly ToolDef[] = [
         },
         "select": {
           "type": "string",
-          "description": "Without `group_by`: what each result carries. `id`, `ticker`, `ts` and `kind` always, then the names you list, each at the top level of the result: `payload`, a payload field of the one kind named (`firm`, or `payload->>'firm'`) and with `join=state` a ticker signal. With `group_by`: the rollup's output columns (default: the group keys + `COUNT(*) AS events`), named with `AS` or for you as on `group_by`."
+          "description": "Without `group_by`: what each result carries. `id`, `ticker`, `ts` and `kind` always, then the names you list, each at the top level of the result: `payload`, a payload field of the one kind named (`firm`, or `payload->>'firm'`) and with `join=state` a ticker signal. `*` is every field: the whole `payload`, and with `join=state` every signal the read's grain stores. With `group_by`: the rollup's output columns (default: the group keys + `COUNT(*) AS events`), named with `AS` or for you as on `group_by`."
         },
         "group_by": {
           "type": "string",
-          "description": "Comma list of rollup keys — switches the response to rollups. Columns (`kind`, `ticker`), payload fields (`firm`, or the explicit `payload->>'firm'`) and expressions over them all roll up. Name a key with `AS` to choose its JSON key: `payload->>'firm' AS firm`. Un-named keys are named for you — a payload read takes its key (`payload->>'firm'` → `firm`), a function keeps the function's name (`lower(ticker)` → `lower`), and anything else falls back to `group_1`, `group_2`."
+          "description": "Comma list of rollup keys; it switches the response to rollups. Columns (`kind`, `ticker`), payload fields (`firm`, or the explicit `payload->>'firm'`) and expressions over them all roll up. Name a key with `AS` to choose its JSON key: `payload->>'firm' AS firm`. Un-named keys are named for you: a payload read takes its key (`payload->>'firm'` → `firm`), a function keeps the function's name (`lower(ticker)` → `lower`), and anything else falls back to `group_1`, `group_2`."
         },
         "having": {
           "type": "string",
@@ -1173,7 +1114,7 @@ export const tools: readonly ToolDef[] = [
         },
         "order": {
           "type": "string",
-          "description": "With `group_by`: the rollup sort, a bare column or output name (put expressions in `select` and sort by their alias); a group key's name works too: `group_by=payload->>'firm' AS firm&order=firm`. Default: `events`. A list is sorted by `ts`: `order=ts` is accepted there and changes nothing."
+          "description": "With `group_by`: the rollup sort, a bare column or output name (put expressions in `select` and sort by their alias); a group key's name works too: `group_by=payload->>'firm' AS firm&order=firm`. Default: `events`, or with your own `select`, its last column's alias. A list is sorted by `ts`: `order=ts` is accepted there and changes nothing."
         },
         "dir": {
           "type": "string",
@@ -1186,12 +1127,147 @@ export const tools: readonly ToolDef[] = [
         },
         "limit": {
           "type": "integer",
-          "description": "Page size (lists) / max groups (aggregate mode). A list takes up to 1000 until 2027-01-12, then 100, and pages the rest with `next_cursor`; a `group_by` rollup keeps up to 1000 groups and sets `truncated: true` past that. A larger value is clamped to the max, not an error; see Deprecations.",
+          "description": "Page size for a list (default 50): up to 1000 until 2027-01-12, then 100, and the rest pages with `next_cursor`. A `group_by` rollup returns every group up to `limit` (default and max 1000) and sets `truncated: true` when there are more. A larger value is clamped to the max, not an error; see Deprecations.",
           "default": 50
         },
         "cursor": {
           "type": "string",
-          "description": "Opaque cursor from the previous response. It carries the filters, `dir`, `select` (and `q` when short), so pass it alone. Not valid with `group_by`."
+          "description": "Opaque cursor from the previous response. It carries the filters, `dir` and `select`, so pass it alone. A `q`, `ticker` list or `select` too long to ride in it is kept as a fingerprint instead: send that param again with `cursor`, the same as on the first page (`q_truncated` flags `q`). A missing or different value is a 400 naming the param. Not valid with `group_by`."
+        }
+      }
+    },
+    "endpoint": {
+      "method": "GET",
+      "path": "/v2/events",
+      "paramLocation": {
+        "kind": "query",
+        "ticker": "query",
+        "universe": "query",
+        "from": "query",
+        "to": "query",
+        "signal": "query",
+        "transition": "query",
+        "merge_gap_seconds": "query",
+        "q": "query",
+        "join": "query",
+        "grain": "query",
+        "select": "query",
+        "group_by": "query",
+        "having": "query",
+        "order": "query",
+        "dir": "query",
+        "limit": "query",
+        "cursor": "query"
+      },
+      "accepts": {
+        "tickers": "query",
+        "since": "query",
+        "until": "query",
+        "interval": "query",
+        "firm": "query",
+        "action": "query",
+        "min_relevance": "query"
+      }
+    }
+  },
+  {
+    "name": "tickerbot_list_events",
+    "description": "Deprecated: works until 2027-01-12. Same as tickerbot_query_events; call that instead.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "description": "Comma list of kinds. Leave it out for earnings, dividend, split, filing, insider and analyst. News, signal and estimate_revision come back only when named. List event kinds lists each kind, its fields and its filters. Values: dividend, split, insider, analyst, earnings, filing, signal, news, estimate_revision.",
+          "pattern": "^(dividend|split|insider|analyst|earnings|filing|signal|news|estimate_revision)(,(dividend|split|insider|analyst|earnings|filing|signal|news|estimate_revision))*$"
+        },
+        "ticker": {
+          "type": "string",
+          "description": "One ticker or a comma list (up to 50). Not combinable with `universe`. A crypto, FX or rate symbol (`X:BTCUSD`) takes `kind=signal`; every other kind is equities-only and returns `400` naming the symbol's asset class."
+        },
+        "universe": {
+          "type": "string",
+          "description": "Scope to a built-in universe (`top_10`, `top_100`) or one of your own, by id. An unknown one answers 200 with no results and its id in `not_found`. Not combinable with `ticker`."
+        },
+        "from": {
+          "type": "string",
+          "description": "Events at or after this instant, in strict ISO: `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM[:SS]Z`. A bare `YYYY-MM-DD` means from the start of that day. For news, analyst ratings and estimate revisions the day is the ET calendar day (a story at 21:00 ET on Nov 2 is Nov 2); dated kinds use their own dates. For `signal`, the ticker's home-market day: ET for stocks and ETFs, UTC for crypto, FX and rates."
+        },
+        "to": {
+          "type": "string",
+          "description": "Window end, in the same strict ISO subset. A bare `YYYY-MM-DD` means through the end of that day; a timestamp is exclusive (events strictly before it). For news, analyst ratings and estimate revisions the day is the ET calendar day; dated kinds use their own dates. For `signal`, the ticker's home-market day: ET for stocks and ETFs, UTC for crypto, FX and rates."
+        },
+        "signal": {
+          "type": "string",
+          "description": "Only with `kind=signal`. One signal or a comma list of up to 5: built-in yes/no signals or your custom signals. Required with `q` or `join=state`. An unknown name filters nothing in and is listed in `not_found` (every name unknown: no signal events). See Signal firings."
+        },
+        "transition": {
+          "type": "string",
+          "description": "Only with `kind=signal`. `enter` (false→true) or `exit` (true→false).",
+          "enum": [
+            "enter",
+            "exit"
+          ]
+        },
+        "merge_gap_seconds": {
+          "type": "integer",
+          "description": "Only with `kind=signal`. Merges an exit and re-entry closer than N seconds into one span. Needs one `signal` and a `ticker` list, and does not combine with `q`, `group_by` or `join=state`."
+        },
+        "q": {
+          "type": "string",
+          "description": "SQL WHERE over `id`, `ticker`, `ts`, `kind` and `payload` (plus the ticker's signals with `join=state`). With one `kind`, its payload fields are typed columns by bare name: `amount > 1`, `firm ILIKE 'Morgan Stanley'`, `relevance >= 0.8` on news (List event kinds lists them); with several kinds, use `payload->>'…'`. Max 4000 chars. ANDs with the other filters."
+        },
+        "join": {
+          "type": "string",
+          "description": "Set to `state` to use the ticker's signals in `q`, `select`, `group_by` and `having`, read as of each event's timestamp at the grain `grain` picks. On the daily grain an event on day D reads D-1's row, never D's close. A signal and a payload field with the same name (`price` on insider and signal events, `cik` on filing) resolve to the signal; spell the field `payload->>'price'`. Needs `q`, `group_by` or a ticker signal in `select`.",
+          "enum": [
+            "state"
+          ]
+        },
+        "grain": {
+          "type": "string",
+          "description": "Only with `kind=signal` or `join=state`. With `kind=signal`, the grain the flips are read at: `1m`, `1h` or `1d`, or `auto` (the default), the coarsest grain the signal is stored at. With `join=state`, the grain the ticker's signals are read at: `auto` (default) blends hourly and the last closed daily session per event; see as of a past date.",
+          "enum": [
+            "1m",
+            "1h",
+            "1d",
+            "auto"
+          ],
+          "default": "auto"
+        },
+        "select": {
+          "type": "string",
+          "description": "Without `group_by`: what each result carries. `id`, `ticker`, `ts` and `kind` always, then the names you list, each at the top level of the result: `payload`, a payload field of the one kind named (`firm`, or `payload->>'firm'`) and with `join=state` a ticker signal. `*` is every field: the whole `payload`, and with `join=state` every signal the read's grain stores. With `group_by`: the rollup's output columns (default: the group keys + `COUNT(*) AS events`), named with `AS` or for you as on `group_by`."
+        },
+        "group_by": {
+          "type": "string",
+          "description": "Comma list of rollup keys; it switches the response to rollups. Columns (`kind`, `ticker`), payload fields (`firm`, or the explicit `payload->>'firm'`) and expressions over them all roll up. Name a key with `AS` to choose its JSON key: `payload->>'firm' AS firm`. Un-named keys are named for you: a payload read takes its key (`payload->>'firm'` → `firm`), a function keeps the function's name (`lower(ticker)` → `lower`), and anything else falls back to `group_1`, `group_2`."
+        },
+        "having": {
+          "type": "string",
+          "description": "Only with `group_by`. Post-aggregation filter."
+        },
+        "order": {
+          "type": "string",
+          "description": "With `group_by`: the rollup sort, a bare column or output name (put expressions in `select` and sort by their alias); a group key's name works too: `group_by=payload->>'firm' AS firm&order=firm`. Default: `events`, or with your own `select`, its last column's alias. A list is sorted by `ts`: `order=ts` is accepted there and changes nothing."
+        },
+        "dir": {
+          "type": "string",
+          "description": "A list: `desc` (default) is newest first, `asc` oldest first, paging forward. With `group_by`: the rollup's sort direction.",
+          "enum": [
+            "asc",
+            "desc"
+          ],
+          "default": "desc"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Page size for a list (default 50): up to 1000 until 2027-01-12, then 100, and the rest pages with `next_cursor`. A `group_by` rollup returns every group up to `limit` (default and max 1000) and sets `truncated: true` when there are more. A larger value is clamped to the max, not an error; see Deprecations.",
+          "default": 50
+        },
+        "cursor": {
+          "type": "string",
+          "description": "Opaque cursor from the previous response. It carries the filters, `dir` and `select`, so pass it alone. A `q`, `ticker` list or `select` too long to ride in it is kept as a fingerprint instead: send that param again with `cursor`, the same as on the first page (`q_truncated` flags `q`). A missing or different value is a 400 naming the param. Not valid with `group_by`."
         }
       }
     },
@@ -1231,7 +1307,7 @@ export const tools: readonly ToolDef[] = [
   },
   {
     "name": "tickerbot_list_event_kinds",
-    "description": "Returns every event kind: what it is, whether it is in the default stream and can be subscribed to, what its `ts` means, and the fields you can name in `q`, `select` and `group_by` when you ask for that kind alone. Call once to learn the kinds, which are in the default stream, which can be subscribed to, and the field names each accepts in `q`, `select` and `group_by`.",
+    "description": "Returns every event kind: what it is, whether it is in the default stream and can be subscribed to, what its `ts` means, and the fields you can name in `q`, `select` and `group_by` when you ask for that kind alone.",
     "inputSchema": {
       "type": "object",
       "properties": {}
@@ -1250,16 +1326,8 @@ export const tools: readonly ToolDef[] = [
       "properties": {
         "kind": {
           "type": "string",
-          "description": "Event kinds to fire on, an array or a comma list. `filing` fires when a 10-K, 20-F, 40-F or 10-Q lands (the next morning's EDGAR index read); `estimate_revision` when the nightly consensus refresh moves an EPS estimate (about 1,000 a night across the market, at most about one a day per ticker).",
-          "enum": [
-            "dividend",
-            "split",
-            "insider",
-            "analyst",
-            "earnings",
-            "filing",
-            "estimate_revision"
-          ]
+          "description": "Event kinds to fire on, an array or a comma list. `filing` fires when a 10-K, 20-F, 40-F or 10-Q lands (the next morning's EDGAR index read); `estimate_revision` when the nightly consensus refresh moves an EPS estimate, one event per fiscal period and horizon that moved (about 1,000 a night across the market). Values: dividend, split, insider, analyst, earnings, filing, estimate_revision.",
+          "pattern": "^(dividend|split|insider|analyst|earnings|filing|estimate_revision)(,(dividend|split|insider|analyst|earnings|filing|estimate_revision))*$"
         },
         "ticker": {
           "type": "string",
@@ -1267,7 +1335,7 @@ export const tools: readonly ToolDef[] = [
         },
         "universe": {
           "type": "string",
-          "description": "Scope to a universe slug (`top_10`, `top_100` or one of yours)."
+          "description": "Scope to a built-in universe (`top_10`, `top_100`) or one of your own, by id. An unknown one is a 400 `universe_not_found` naming it."
         },
         "q": {
           "type": "string",
@@ -1279,7 +1347,7 @@ export const tools: readonly ToolDef[] = [
         },
         "channel": {
           "type": "string",
-          "description": "Delivery channel. Inferred when omitted: `webhook` if `target_url` is set, `discord` if `discord_url` is set, `mobile_push` if `device_id` is set, else `in_app`.",
+          "description": "Delivery channel: `webhook` (POST to `target_url`), `discord` (an embed at `discord_url`), `in_app` (the dashboard only) or `mobile_push` (to `device_id`). Inferred when omitted: `discord` if `discord_url` is set, else `mobile_push` if `device_id` is set, else `webhook` if `target_url` is set, else `in_app`. See Delivery channels.",
           "enum": [
             "webhook",
             "discord",
@@ -1289,19 +1357,19 @@ export const tools: readonly ToolDef[] = [
         },
         "target_url": {
           "type": "string",
-          "description": "Only with `channel=webhook`. HTTPS delivery URL."
+          "description": "Only with `channel=webhook`. HTTPS URL each delivery is POSTed to."
         },
         "discord_url": {
           "type": "string",
-          "description": "Only with `channel=discord`. Discord incoming-webhook URL. Stored as a posting credential: the create response echoes it back under `channel_config`, but every later read (list, get, deliveries) strips it and sets `channel_config_present: true` instead."
+          "description": "Only with `channel=discord`. Discord incoming-webhook URL (`https://discord.com/api/webhooks/…`). Stored as a posting credential: the create response echoes it back under `channel_config`, but every later read (list, get, deliveries) strips it and sets `channel_config_present: true` instead."
         },
         "device_id": {
           "type": "string",
-          "description": "Only with `channel=mobile_push`. Device to notify, from `POST /v2/devices/register`. Unknown ids are a 404 `device_not_found`."
+          "description": "Only with `channel=mobile_push`. Device to notify, from `POST /v2/devices/register`. An unknown id is a 400 `device_not_found`."
         },
         "name": {
           "type": "string",
-          "description": "Display name. Defaults to `events: <kinds> · <scope>`."
+          "description": "Display name, up to 80 characters. Defaults to `events: <kinds> · <scope>`."
         }
       },
       "required": [
@@ -1332,14 +1400,14 @@ export const tools: readonly ToolDef[] = [
     }
   },
   {
-    "name": "tickerbot_search_news",
+    "name": "tickerbot_query_news",
     "description": "Queries news with SQL for any ticker or a screen's matches: articles with how each one treats every ticker it mentions, or rollups when you group them. `ticker` (one or a comma list) keeps articles that mention it; add `min_relevance: 0.8` to keep only articles about it. Each article carries `mentions`: per ticker, `relevance` and `sentiment_score`/`sentiment`. Naming `ticker`, `relevance`, `sentiment_score` or `sentiment` in `q`/`select`/`group_by` gives one row per article per mention: `q: ticker = 'NVDA' AND sentiment_score < -0.3` is articles negative about NVDA. `search` is full-text over title and summary. Rollups with group_by/having return `truncated: true` instead of paging.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "search": {
           "type": "string",
-          "description": "Full-text search over `title` + `summary` — websearch grammar: `nvidia earnings` (all words), `\"price target\"` (phrase), `chips OR semiconductors`, `-crypto` (negation). Max 200 chars. ANDs with `q` and the other filters. Language-stemmed English."
+          "description": "Full-text search over `title` + `summary`, in websearch grammar: `nvidia earnings` (all words), `\"price target\"` (phrase), `chips OR semiconductors`, `-crypto` (negation). Max 200 chars. ANDs with `q` and the other filters. Language-stemmed English."
         },
         "ticker": {
           "type": "string",
@@ -1347,15 +1415,15 @@ export const tools: readonly ToolDef[] = [
         },
         "universe": {
           "type": "string",
-          "description": "Universe slug: articles that mention any member. Not combinable with `ticker`."
+          "description": "Scope to a built-in universe (`top_10`, `top_100`) or one of your own, by id. An unknown one answers 200 with no results and its id in `not_found`. Articles that mention any member. Not combinable with `ticker`."
         },
         "from": {
           "type": "string",
-          "description": "Earliest `time_published` (inclusive) — strict ISO: `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM[:SS]Z`. A bare date starts at 00:00 ET that day."
+          "description": "Earliest `time_published` (inclusive), in strict ISO: `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM[:SS]Z`. A bare date starts at 00:00 ET that day."
         },
         "to": {
           "type": "string",
-          "description": "Articles strictly before this instant — same strict ISO subset, matching `/v2/events`. A bare `YYYY-MM-DD` means through the end of that day (the ET calendar day), so `from` and `to` on the same date return that day."
+          "description": "Articles strictly before this instant, in the same strict ISO subset as `from` (as on `/v2/events`). A bare `YYYY-MM-DD` means through the end of that day (the ET calendar day), so `from` and `to` on the same date return that day."
         },
         "min_relevance": {
           "type": "number",
@@ -1363,15 +1431,15 @@ export const tools: readonly ToolDef[] = [
         },
         "q": {
           "type": "string",
-          "description": "WHERE clause over news articles. Max 4000 chars. Required unless `search`, `ticker`, `universe`, `from` or `to` is present. Takes every article field under Returns except `mentions`, plus the per-mention fields `ticker`, `relevance`, `sentiment_score` and `sentiment` (one article per mention). Signals are not joinable here."
+          "description": "WHERE clause over news articles. Max 4000 chars. Required unless `search`, `ticker`, `universe`, `from` or `to` is present. Takes every article field under Returns except `mentions`, plus the per-mention fields `ticker`, `relevance`, `sentiment_score` and `sentiment` (one article per mention)."
         },
         "select": {
           "type": "string",
-          "description": "Fields or expressions to return (max 2000 chars). Defaults to the article row (no `group_by`) or `<group_by keys>, COUNT(*) AS volume` (with `group_by`). `mentions` is selectable on its own."
+          "description": "Fields or expressions to return (max 2000 chars). Defaults to the article row (no `group_by`) or `<group_by keys>, COUNT(*) AS volume` (with `group_by`). `*` returns every article field under Returns plus `mentions` (on a per-mention row, the mention's four fields too). `mentions` is selectable on its own."
         },
         "group_by": {
           "type": "string",
-          "description": "Comma-separated group keys, 1-6 (max 1000 chars); the response becomes rollups. `ticker` rolls up per ticker mentioned. Name a key with `AS` to choose its JSON key; an un-named expression is named for you rather than returned as `?column?`."
+          "description": "Comma-separated group keys, 1-6 (max 1000 chars); the response becomes rollups. `ticker` rolls up per ticker mentioned. Name a key with `AS` to choose its JSON key; an un-named expression is named for you."
         },
         "having": {
           "type": "string",
@@ -1379,7 +1447,7 @@ export const tools: readonly ToolDef[] = [
         },
         "order": {
           "type": "string",
-          "description": "Sort — a bare field name or SELECT alias only (put expressions in `select` and order by their alias). Defaults to `time_published` (articles) or `volume` (rollups; with your own `select` that has no `volume` column, its last column's alias)."
+          "description": "Sort by a bare field name or SELECT alias only (put expressions in `select` and order by their alias). Defaults to `time_published` (articles) or `volume` (rollups; with your own `select` that has no `volume` column, its last column's alias)."
         },
         "dir": {
           "type": "string",
@@ -1392,12 +1460,108 @@ export const tools: readonly ToolDef[] = [
         },
         "limit": {
           "type": "integer",
-          "description": "Page size (articles) / max groups (a `group_by` rollup). Articles take up to 1000 until 2027-01-12, then 100, and page the rest with `next_cursor`; a rollup keeps up to 1000 groups and sets `truncated: true` past that. A larger value is clamped to the max, not an error; see Deprecations.",
+          "description": "Page size (articles) / max groups (a `group_by` rollup). Articles take up to 1000 until 2027-01-12, then 100, and page the rest with `next_cursor`. A rollup does not page: it returns up to `limit` groups, every group up to 1000 by default, and sets `truncated: true` when there are more. A larger value is clamped to the max, not an error; see Deprecations.",
           "default": 50
         },
         "cursor": {
           "type": "string",
-          "description": "Opaque pagination cursor from a prior response's `next_cursor`."
+          "description": "From a prior response's `next_cursor`. Send it with the same params as the first page (`limit` may change). It holds the position and pins the read: a page whose params differ from the first page's, or a cursor sent alone, is a 400 naming the param to send."
+        }
+      }
+    },
+    "endpoint": {
+      "method": "GET",
+      "path": "/v2/news",
+      "paramLocation": {
+        "search": "query",
+        "ticker": "query",
+        "universe": "query",
+        "from": "query",
+        "to": "query",
+        "min_relevance": "query",
+        "q": "query",
+        "select": "query",
+        "group_by": "query",
+        "having": "query",
+        "order": "query",
+        "dir": "query",
+        "limit": "query",
+        "cursor": "query"
+      },
+      "accepts": {
+        "tickers": "query",
+        "since": "query",
+        "until": "query"
+      }
+    }
+  },
+  {
+    "name": "tickerbot_search_news",
+    "description": "Deprecated: works until 2027-01-12. Same as tickerbot_query_news; call that instead.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "search": {
+          "type": "string",
+          "description": "Full-text search over `title` + `summary`, in websearch grammar: `nvidia earnings` (all words), `\"price target\"` (phrase), `chips OR semiconductors`, `-crypto` (negation). Max 200 chars. ANDs with `q` and the other filters. Language-stemmed English."
+        },
+        "ticker": {
+          "type": "string",
+          "description": "One ticker or a comma list (up to 50): articles that mention any of them. Not combinable with `universe`. Per-mention rows still list every ticker an article mentions; put `ticker = 'NVDA'` in `q` for one ticker's rows."
+        },
+        "universe": {
+          "type": "string",
+          "description": "Scope to a built-in universe (`top_10`, `top_100`) or one of your own, by id. An unknown one answers 200 with no results and its id in `not_found`. Articles that mention any member. Not combinable with `ticker`."
+        },
+        "from": {
+          "type": "string",
+          "description": "Earliest `time_published` (inclusive), in strict ISO: `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM[:SS]Z`. A bare date starts at 00:00 ET that day."
+        },
+        "to": {
+          "type": "string",
+          "description": "Articles strictly before this instant, in the same strict ISO subset as `from` (as on `/v2/events`). A bare `YYYY-MM-DD` means through the end of that day (the ET calendar day), so `from` and `to` on the same date return that day."
+        },
+        "min_relevance": {
+          "type": "number",
+          "description": "Only with `ticker` or `universe`. Keeps an article only when it is about one of the tickers, meaning that ticker's `relevance` (0 to 1) is at least this value. `0.8` drops passing mentions. Omitted: every article that mentions them. `400` without a ticker scope; in `q`, filter the mention itself: `ticker = 'NVDA' AND relevance >= 0.8`."
+        },
+        "q": {
+          "type": "string",
+          "description": "WHERE clause over news articles. Max 4000 chars. Required unless `search`, `ticker`, `universe`, `from` or `to` is present. Takes every article field under Returns except `mentions`, plus the per-mention fields `ticker`, `relevance`, `sentiment_score` and `sentiment` (one article per mention)."
+        },
+        "select": {
+          "type": "string",
+          "description": "Fields or expressions to return (max 2000 chars). Defaults to the article row (no `group_by`) or `<group_by keys>, COUNT(*) AS volume` (with `group_by`). `*` returns every article field under Returns plus `mentions` (on a per-mention row, the mention's four fields too). `mentions` is selectable on its own."
+        },
+        "group_by": {
+          "type": "string",
+          "description": "Comma-separated group keys, 1-6 (max 1000 chars); the response becomes rollups. `ticker` rolls up per ticker mentioned. Name a key with `AS` to choose its JSON key; an un-named expression is named for you."
+        },
+        "having": {
+          "type": "string",
+          "description": "Only with `group_by`. HAVING clause on the rollup (max 1000 chars)."
+        },
+        "order": {
+          "type": "string",
+          "description": "Sort by a bare field name or SELECT alias only (put expressions in `select` and order by their alias). Defaults to `time_published` (articles) or `volume` (rollups; with your own `select` that has no `volume` column, its last column's alias)."
+        },
+        "dir": {
+          "type": "string",
+          "description": "Sort direction.",
+          "enum": [
+            "asc",
+            "desc"
+          ],
+          "default": "desc"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Page size (articles) / max groups (a `group_by` rollup). Articles take up to 1000 until 2027-01-12, then 100, and page the rest with `next_cursor`. A rollup does not page: it returns up to `limit` groups, every group up to 1000 by default, and sets `truncated: true` when there are more. A larger value is clamped to the max, not an error; see Deprecations.",
+          "default": 50
+        },
+        "cursor": {
+          "type": "string",
+          "description": "From a prior response's `next_cursor`. Send it with the same params as the first page (`limit` may change). It holds the position and pins the read: a page whose params differ from the first page's, or a cursor sent alone, is a 400 naming the param to send."
         }
       }
     },
@@ -1443,7 +1607,7 @@ export const tools: readonly ToolDef[] = [
         },
         "universe": {
           "type": "string",
-          "description": "Universe slug (`top_10`, `top_100` or one of yours): articles that mention any member."
+          "description": "Scope to a built-in universe (`top_10`, `top_100`) or one of your own, by id. An unknown one is a 400 `universe_not_found` naming it. Articles that mention any member fire."
         },
         "min_relevance": {
           "type": "number",
@@ -1459,7 +1623,7 @@ export const tools: readonly ToolDef[] = [
         },
         "channel": {
           "type": "string",
-          "description": "Delivery channel. Inferred when omitted: `webhook` if `target_url` is set, `discord` if `discord_url` is set, `mobile_push` if `device_id` is set, else `in_app`.",
+          "description": "Delivery channel: `webhook` (POST to `target_url`), `discord` (an embed at `discord_url`), `in_app` (the dashboard only) or `mobile_push` (to `device_id`). Inferred when omitted: `discord` if `discord_url` is set, else `mobile_push` if `device_id` is set, else `webhook` if `target_url` is set, else `in_app`. See Delivery channels.",
           "enum": [
             "webhook",
             "discord",
@@ -1469,19 +1633,19 @@ export const tools: readonly ToolDef[] = [
         },
         "target_url": {
           "type": "string",
-          "description": "Only with `channel=webhook`. HTTPS delivery URL."
+          "description": "Only with `channel=webhook`. HTTPS URL each delivery is POSTed to."
         },
         "discord_url": {
           "type": "string",
-          "description": "Only with `channel=discord`. Discord incoming-webhook URL. Stored as a posting credential: the create response echoes it back under `channel_config`, but every later read (list, get, deliveries) strips it and sets `channel_config_present: true` instead."
+          "description": "Only with `channel=discord`. Discord incoming-webhook URL (`https://discord.com/api/webhooks/…`). Stored as a posting credential: the create response echoes it back under `channel_config`, but every later read (list, get, deliveries) strips it and sets `channel_config_present: true` instead."
         },
         "device_id": {
           "type": "string",
-          "description": "Only with `channel=mobile_push`. Device to notify, from `POST /v2/devices/register`. Unknown ids are a 404 `device_not_found`."
+          "description": "Only with `channel=mobile_push`. Device to notify, from `POST /v2/devices/register`. An unknown id is a 400 `device_not_found`."
         },
         "name": {
           "type": "string",
-          "description": "Display name. Defaults to `news: <scope> · <search or q>`."
+          "description": "Display name, up to 80 characters. Defaults to `news: <scope> · <search or q>`."
         }
       }
     },
@@ -1509,21 +1673,18 @@ export const tools: readonly ToolDef[] = [
   },
   {
     "name": "tickerbot_list_universes",
-    "description": "Lists every universe you can use: your own ticker lists and the built-in ones. `kind: builtin` lists the built-in universes (top_10, top_100); omit it for yours; `builtin,custom` lists both. Use a slug as `universe` on scan, signal, and subscribe tools.",
+    "description": "Lists every universe you can use: your own ticker lists and the built-in ones. `kind: builtin` lists the built-in universes (top_10, top_100); omit it for yours; `builtin,custom` lists both. Use a slug as `universe` on scan, signal and subscribe tools.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "search": {
           "type": "string",
-          "description": "Only universes whose id, name or description contains this text (case-insensitive)."
+          "description": "Only universes whose id, name or description contains this text (case-insensitive). Results are ranked across built-in and your own universes: an exact id or name match first, then an id or name that starts with the term, then one that contains it, then descriptions that have it as a whole word, then descriptions that contain it; list order within each rank. Paging a search never repeats or skips."
         },
         "kind": {
           "type": "string",
-          "description": "Which universes to list: `builtin` (`top_10`, `top_100`), `custom` (your own) or both as a comma list. Leave it out for your own; from the cut-off on Deprecations it lists both.",
-          "enum": [
-            "builtin",
-            "custom"
-          ]
+          "description": "Which universes to list: `builtin` (`top_10`, `top_100`), `custom` (your own) or both as a comma list. Leave it out for your own; from the cut-off on Deprecations it lists both. Values: builtin, custom.",
+          "pattern": "^(builtin|custom)(,(builtin|custom))*$"
         },
         "limit": {
           "type": "integer",
@@ -1532,7 +1693,7 @@ export const tools: readonly ToolDef[] = [
         },
         "cursor": {
           "type": "string",
-          "description": "Opaque cursor from the previous response."
+          "description": "The previous response's `next_cursor`. Send it with the same params as the first page (`limit` may change); a page whose params differ is a 400 naming the param."
         }
       }
     },
@@ -1565,11 +1726,11 @@ export const tools: readonly ToolDef[] = [
         },
         "name": {
           "type": "string",
-          "description": "Human-readable label, up to 80 characters. Display-only — never used to reference the universe."
+          "description": "Display name, up to 80 characters. Display only: the `id` is what references the universe."
         },
         "id": {
           "type": "string",
-          "description": "Optional slug — becomes the universe's permanent handle everywhere (`?universe=`, subscribe `universe`, CRUD path). Pattern `^[a-z][a-z0-9_]{0,62}$` — starts with a lowercase letter, then lowercase letters/digits/underscore, 63 chars max; the value is trimmed and lowercased before validation. `top_10` and `top_100` are reserved for system universes and rejected with 400. Must be unique within your account. Generated (`u_…`) if omitted."
+          "description": "Optional slug: the universe's permanent handle everywhere (`?universe=`, subscribe `universe`, CRUD path). Pattern `^[a-z][a-z0-9_]{0,62}$`: starts with a lowercase letter, then lowercase letters/digits/underscore, 63 chars max; the value is trimmed and lowercased before validation. `top_10` and `top_100` are reserved for built-in universes and rejected with 400. Must be unique within your account. Generated (`u_…`) if omitted."
         },
         "description": {
           "type": "string",
@@ -1623,7 +1784,7 @@ export const tools: readonly ToolDef[] = [
   },
   {
     "name": "tickerbot_update_universe",
-    "description": "Updates one of your universes: its name, description or members. `tickers` replaces the whole list; `add`/`remove` adjust it. System universes cannot be edited.",
+    "description": "Updates one of your universes: its name, description or members. `tickers` replaces the whole list; `add`/`remove` adjust it. Built-in universes cannot be edited.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1686,7 +1847,7 @@ export const tools: readonly ToolDef[] = [
   },
   {
     "name": "tickerbot_delete_universe",
-    "description": "Permanently deletes one of your universes. Webhooks that reference the deleted universe fail on their next eval — clean those up first.",
+    "description": "Permanently deletes one of your universes. A universe any of your webhooks still uses answers 409 universe_referenced; force=true deletes it, and those webhooks are disabled at their next evaluation.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1696,7 +1857,7 @@ export const tools: readonly ToolDef[] = [
         },
         "force": {
           "type": "boolean",
-          "description": "A universe still referenced by live webhooks refuses to delete with `409 universe_referenced`. Pass `force=true` to delete anyway; those webhooks are disabled at their next evaluation.",
+          "description": "A universe that any of your webhooks references (active or disabled) refuses to delete with `409 universe_referenced`, listing them in `referencing_webhooks`. Pass `force=true` to delete anyway; those webhooks are disabled at their next evaluation.",
           "default": false
         }
       },
@@ -1727,11 +1888,8 @@ export const tools: readonly ToolDef[] = [
       "properties": {
         "status": {
           "type": "string",
-          "description": "Filter by status: `active`, `disabled` or both as a comma list — the only two states a webhook has (`disabled` covers a user pause, the automatic disable after 72 hours with no successful delivery and the automatic disable of a trigger that can no longer run; `disabled_reason` on each record says which: `user_disabled`, `delivery_failure`, `evaluation_failure`, `plan_downgrade` or `subscription_canceled`). Omit for all.",
-          "enum": [
-            "active",
-            "disabled"
-          ]
+          "description": "Filter by status: `active`, `disabled` or both as a comma list. A webhook is always one of the two (`disabled` covers a user pause, the automatic disable after deliveries have kept failing for 72 hours with none getting through, and the automatic disable of a trigger that cannot run; `disabled_reason` on each record says which: `user_disabled`, `delivery_failure`, `evaluation_failure`, `plan_downgrade` or `subscription_canceled`). Omit for all. Values: active, disabled.",
+          "pattern": "^(active|disabled)(,(active|disabled))*$"
         },
         "limit": {
           "type": "integer",
@@ -1740,7 +1898,7 @@ export const tools: readonly ToolDef[] = [
         },
         "cursor": {
           "type": "string",
-          "description": "Opaque cursor from the previous response."
+          "description": "The previous response's `next_cursor`. Send it with the same params as the first page (`limit` may change); a page whose params differ is a 400 naming the param."
         }
       }
     },
@@ -1785,7 +1943,7 @@ export const tools: readonly ToolDef[] = [
   },
   {
     "name": "tickerbot_update_webhook",
-    "description": "Edits a webhook in place; send only the fields you want to change. Send only what changes. The trigger takes the filters of the subscribe that made the webhook (subscription_origin.type: scan q/universe/select/order/dir; ticker q/select; signal condition/universe/select; event kind/ticker/universe/q/select; news search/ticker/universe/min_relevance/q/select), validated like a new subscribe; a change to the filters fires only on new matches (what already matches or already happened does not fire), while an edit of select/order/dir keeps what already matched. enabled=true turns a disabled webhook back on. Unknown fields are a 400.",
+    "description": "Edits a webhook in place; send only the fields you want to change. The trigger takes the filters of the subscribe that made the webhook (subscription_origin.type: scan q/universe/select/order/dir; ticker q/select; signal condition/universe/select/order/dir; event kind/ticker/universe/q/select; news search/ticker/universe/min_relevance/q/select), validated like a new subscribe; a change to the filters fires only on new matches (what already matches or already happened does not fire), while an edit of select/order/dir keeps what already matched. enabled=true turns a disabled webhook back on. Unknown fields are a 400.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1799,16 +1957,8 @@ export const tools: readonly ToolDef[] = [
         },
         "kind": {
           "type": "string",
-          "description": "Only with event webhooks. The kinds to fire on, as on Subscribe to events.",
-          "enum": [
-            "dividend",
-            "split",
-            "insider",
-            "analyst",
-            "earnings",
-            "filing",
-            "estimate_revision"
-          ]
+          "description": "Only with event webhooks. The kinds to fire on, as on Subscribe to events. Values: dividend, split, insider, analyst, earnings, filing, estimate_revision.",
+          "pattern": "^(dividend|split|insider|analyst|earnings|filing|estimate_revision)(,(dividend|split|insider|analyst|earnings|filing|estimate_revision))*$"
         },
         "condition": {
           "type": "string",
@@ -1828,7 +1978,7 @@ export const tools: readonly ToolDef[] = [
         },
         "q": {
           "type": "string",
-          "description": "Only with scan, ticker, event or news webhooks. The filter, in the grammar of the subscribe that made the webhook. On an event webhook it replaces the whole filter. A change to the filters (`q`, `condition`, `universe`, `kind`, `ticker`, `search`, `min_relevance`) fires only on new matches; an edit of `select`, `order` or `dir` keeps what already matched."
+          "description": "Only with scan, ticker, event or news webhooks. The filter, in the grammar of the subscribe that made the webhook. On an event webhook it replaces the whole filter. On a ticker webhook send the condition alone, or the `q` a read returns (`ticker = 'NVDA' AND (…)`): the webhook's own ticker scope is not added twice. A change to the filters (`q`, `condition`, `universe`, `kind`, `ticker`, `search`, `min_relevance`) fires only on new matches; an edit of `select`, `order` or `dir` keeps what already matched."
         },
         "select": {
           "type": "string",
@@ -1917,6 +2067,8 @@ export const tools: readonly ToolDef[] = [
         "kinds": "body",
         "tickers": "body",
         "universe_id": "body",
+        "columns": "body",
+        "fields": "body",
         "id": "path"
       },
       "pathAliases": {
@@ -1997,20 +2149,16 @@ export const tools: readonly ToolDef[] = [
         },
         "status": {
           "type": "string",
-          "description": "Filter by delivery status (one or a comma list).",
-          "enum": [
-            "pending",
-            "delivered",
-            "permanent_failure"
-          ]
+          "description": "Filter by delivery status (one or a comma list). Values: pending, delivered, permanent_failure.",
+          "pattern": "^(pending|delivered|permanent_failure)(,(pending|delivered|permanent_failure))*$"
         },
         "from": {
           "type": "string",
-          "description": "Only deliveries created at/after this moment — epoch seconds, epoch milliseconds (13+ digits) or an ISO datetime; a date-only value starts at the beginning of that UTC day. Delivery history is retained for 90 days; deleting a webhook deletes its delivery history with it."
+          "description": "Only deliveries created at or after this moment: `YYYY-MM-DD` or a UTC timestamp (`YYYY-MM-DDTHH:MM:SSZ`); a date-only value starts at the beginning of that UTC day. Delivery history is retained for 90 days; deleting a webhook deletes its delivery history with it."
         },
         "to": {
           "type": "string",
-          "description": "Only deliveries created before this moment — same value grammar as `from`. A date-only value covers that whole UTC day. A timestamp is included until 2027-01-12 and exclusive from then, as everywhere else (Deprecations). `from` after `to` is a 400. See Time windows."
+          "description": "Window end (deliveries created up to this moment): same value grammar as `from`. A date-only value covers that whole UTC day. A timestamp is included until 2027-01-12 and exclusive from then, as everywhere else (Deprecations). `from` after `to` is a 400. See Time windows."
         },
         "limit": {
           "type": "integer",
@@ -2019,7 +2167,7 @@ export const tools: readonly ToolDef[] = [
         },
         "cursor": {
           "type": "string",
-          "description": "Opaque cursor."
+          "description": "The previous response's `next_cursor`. Send it with the same params as the first page (`limit` may change); a page whose params differ is a 400 naming the param."
         }
       },
       "required": [
@@ -2049,7 +2197,7 @@ export const tools: readonly ToolDef[] = [
   },
   {
     "name": "tickerbot_redeliver_webhook_delivery",
-    "description": "Resends a past delivery, with the exact body it carried, to the webhook's current target. Resends the exact original body to the webhook's current target. The webhook must be active (409 otherwise); take delivery ids from tickerbot_list_webhook_deliveries. Test fires cannot be resent.",
+    "description": "Resends a past delivery, with the exact body it carried, to the webhook's current target. The webhook must be active (409 otherwise); take delivery ids from tickerbot_list_webhook_deliveries. Test fires cannot be resent.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2086,7 +2234,7 @@ export const tools: readonly ToolDef[] = [
   },
   {
     "name": "tickerbot_test_webhook",
-    "description": "Sends a real-shape test delivery to your endpoint, instantly. One-shot: a failed test never retries and never auto-disables the webhook. 400 when the webhook has no target_url.",
+    "description": "Sends a sample delivery to your endpoint, instantly: the same shape, headers and signature as a real fire. One-shot: a failed test never retries and never auto-disables the webhook. 400 for an in-app webhook (nothing external to send to).",
     "inputSchema": {
       "type": "object",
       "properties": {
