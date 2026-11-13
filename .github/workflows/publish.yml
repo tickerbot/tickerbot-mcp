@@ -36,7 +36,7 @@ jobs:
       # npm 11.5+ is required for OIDC Trusted Publishing. Node 20 LTS
       # still ships with npm 10.x by default, so we upgrade explicitly.
       - name: Upgrade npm
-        run: npm install -g npm@latest
+        run: npm install -g npm@11   # 11.5+ has OIDC trusted publishing; npm 12 needs Node 22+
 
       - name: Install
         run: npm ci
